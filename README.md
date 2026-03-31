@@ -14,9 +14,21 @@ Files:
 - `docs/system-architecture.md`
 - `docs/api-contracts.md`
 - `docs/frontend-store.md`
+- `docs/google-adapters.md`
+- `docs/planner-engine.md`
 - `schemas/itinerary.schema.json`
 - `schemas/planner-command.schema.json`
 - `examples/sample-itinerary.json`
+- `server/planner/`
+
+Run locally:
+
+- `npm run dev`
+- Open `http://localhost:3000`
+
+Test locally:
+
+- `npm test`
 
 The intent is to keep a single itinerary state as the source of truth, then derive:
 

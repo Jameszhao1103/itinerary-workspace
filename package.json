@@ -1,0 +1,9 @@
+{
+  "name": "planner-workspace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server/app/dev-server.mjs",
+    "test": "node --test tests/**/*.test.mjs"
+  }
+}

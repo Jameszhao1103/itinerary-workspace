@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Planner Workspace</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="header">
+        <div class="title">
+          <h1 id="tripTitle">Planner Workspace</h1>
+          <p id="tripSubtitle">Shared state across map, timeline, markdown, and assistant.</p>
+        </div>
+        <div class="meta" id="metaPills"></div>
+        <div class="global-day-switcher">
+          <div class="switcher-label">Global Day View</div>
+          <div class="day-tabs" id="dayTabs"></div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel map">
+          <h2>Map · <span id="mapDayLabel">Day</span></h2>
+          <div class="map-canvas" id="mapCanvas"></div>
+          <div class="legend-row" id="mapLegend">
+            <span class="legend-chip"><span class="dot airport"></span>Airport</span>
+            <span class="legend-chip"><span class="dot hotel"></span>Hotel</span>
+            <span class="legend-chip"><span class="dot restaurant"></span>Meal</span>
+            <span class="legend-chip"><span class="dot sight"></span>Activity</span>
+            <span class="legend-chip">Solid: drive</span>
+            <span class="legend-chip">Dashed: walk</span>
+          </div>
+        </article>
+
+        <article class="panel markdown">
+          <h2>Markdown Plan · <span id="markdownDayLabel">Day</span></h2>
+          <pre id="markdownPanel"></pre>
+        </article>
+
+        <article class="panel timeline">
+          <h2>Timeline · <span id="timelineDayLabel">Day</span></h2>
+          <div id="timelinePanel"></div>
+        </article>
+
+        <article class="panel assistant">
+          <h2>Assistant</h2>
+          <form id="assistantForm" class="assistant-form">
+            <textarea
+              id="assistantInput"
+              class="chat-input"
+              placeholder="Try: 把周六晚餐换成评分高一点的美式餐厅"
+            ></textarea>
+            <div class="assistant-toolbar">
+              <button type="submit" class="button button-primary">Preview</button>
+              <button type="button" class="button" id="resetButton">Reset sample trip</button>
+            </div>
+          </form>
+          <div class="quick-actions">
+            <button type="button" class="action" data-quick-action="replace-dinner">Replace dinner</button>
+            <button type="button" class="action" data-quick-action="reoptimize-day">Reoptimize day</button>
+            <button type="button" class="action" data-quick-action="add-lunch">Add lunch</button>
+            <button type="button" class="action" data-quick-action="relax-day">Relax schedule</button>
+          </div>
+          <div class="assistant-status" id="assistantStatus">Loading trip…</div>
+          <div class="diff" id="assistantDiff"></div>
+          <div class="assistant-toolbar">
+            <button type="button" class="button button-primary hidden" id="applyButton">Apply preview</button>
+            <button type="button" class="button hidden" id="rejectButton">Reject preview</button>
+          </div>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
