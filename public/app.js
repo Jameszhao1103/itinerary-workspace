@@ -5,9 +5,15 @@ const state = {
   preview: null,
   previewMeta: null,
   selectedDay: null,
+  selectedItemId: null,
+  workspaceTab: "selection",
   pending: false,
   provider: "mock",
+  assistantProvider: "rules",
   mapsBrowserApiKey: null,
+  placeSearchQuery: "",
+  placeSearchResults: [],
+  placeSearchItemId: null,
 };
 
 const mapRuntime = {
@@ -17,6 +23,10 @@ const mapRuntime = {
   markers: [],
   polylines: [],
   renderToken: 0,
+};
+
+const timelineDrag = {
+  active: null,
 };
 
 const TIMELINE_START_HOUR = 8;
@@ -37,13 +47,16 @@ const elements = {
   metaPills: document.querySelector("#metaPills"),
   dayTabs: document.querySelector("#dayTabs"),
   mapDayLabel: document.querySelector("#mapDayLabel"),
-  planDayLabel: document.querySelector("#planDayLabel"),
   timelineDayLabel: document.querySelector("#timelineDayLabel"),
+  workspaceDayLabel: document.querySelector("#workspaceDayLabel"),
   mapCanvas: document.querySelector("#mapCanvas"),
   mapStatus: document.querySelector("#mapStatus"),
   planPanel: document.querySelector("#planPanel"),
   timelinePanel: document.querySelector("#timelinePanel"),
+  workspaceTabs: document.querySelectorAll("[data-workspace-tab]"),
+  workspaceViews: document.querySelectorAll("[data-workspace-view]"),
   assistantInput: document.querySelector("#assistantInput"),
+  focusEditor: document.querySelector("#focusEditor"),
   assistantStatus: document.querySelector("#assistantStatus"),
   assistantDiff: document.querySelector("#assistantDiff"),
   assistantForm: document.querySelector("#assistantForm"),
@@ -89,6 +102,9 @@ elements.applyButton.addEventListener("click", async () => {
     state.preview = null;
     state.previewMeta = null;
     state.selectedDay = state.selectedDay ?? state.trip.days[0]?.date ?? null;
+    state.placeSearchQuery = "";
+    state.placeSearchResults = [];
+    state.placeSearchItemId = null;
     elements.assistantInput.value = "";
     render();
     setPending(false, "Preview applied.");
@@ -113,6 +129,9 @@ elements.rejectButton.addEventListener("click", async () => {
 
     state.preview = null;
     state.previewMeta = null;
+    state.placeSearchQuery = "";
+    state.placeSearchResults = [];
+    state.placeSearchItemId = null;
     render();
     setPending(false, "Preview discarded.");
   } catch (error) {
@@ -151,6 +170,145 @@ elements.quickActions.forEach((button) => {
   });
 });
 
+elements.workspaceTabs.forEach((button) => {
+  button.addEventListener("click", () => {
+    const tab = button.dataset.workspaceTab;
+    if (!tab) {
+      return;
+    }
+
+    state.workspaceTab = tab;
+    renderWorkspaceShell();
+  });
+});
+
+elements.focusEditor.addEventListener("click", async (event) => {
+  const actionTarget = event.target.closest("[data-editor-action]");
+  if (!actionTarget) {
+    return;
+  }
+
+  const activeTrip = getActiveTrip();
+  const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
+  if (!selectedItem) {
+    return;
+  }
+
+  const action = actionTarget.dataset.editorAction;
+  if (action === "toggle-lock") {
+    await previewWithInput({
+      commands: [
+        {
+          command_id: `cmd_lock_${Date.now()}`,
+          action: selectedItem.locked ? "unlock_item" : "lock_item",
+          item_id: selectedItem.id,
+          day_date: state.selectedDay,
+          reason: selectedItem.locked ? "Unlock focused item" : "Lock focused item",
+        },
+      ],
+    });
+    return;
+  }
+
+  if (action === "move-earlier" || action === "move-later") {
+    const neighbor = getAdjacentItem(activeTrip, state.selectedDay, selectedItem.id, action === "move-earlier" ? -1 : 1);
+    if (!neighbor) {
+      return;
+    }
+
+    await previewWithInput({
+      commands: [
+        {
+          command_id: `cmd_reorder_${Date.now()}`,
+          action: "reorder_item",
+          item_id: selectedItem.id,
+          target_item_id: neighbor.id,
+          day_date: state.selectedDay,
+          reason: action === "move-earlier" ? "Move focused item earlier" : "Move focused item later",
+          payload: {
+            position: action === "move-earlier" ? "before" : "after",
+          },
+        },
+      ],
+    });
+    return;
+  }
+
+  if (action === "replace-place") {
+    const placeId = actionTarget.dataset.placeId;
+    const placeName = actionTarget.dataset.placeName ?? "selected place";
+    if (!placeId) {
+      return;
+    }
+
+    await previewWithInput({
+      commands: [
+        {
+          command_id: `cmd_replace_${Date.now()}`,
+          action: "replace_place",
+          item_id: selectedItem.id,
+          day_date: state.selectedDay,
+          reason: `Replace ${selectedItem.title} with ${placeName}`,
+          place_id: placeId,
+          constraints: {
+            near_place_id: selectedItem.place_id,
+          },
+        },
+      ],
+    });
+    return;
+  }
+});
+
+elements.focusEditor.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+
+  const activeTrip = getActiveTrip();
+  const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
+  if (!selectedItem) {
+    return;
+  }
+
+  const formMode = form.dataset.editorForm;
+  if (formMode === "time") {
+    const formData = new FormData(form);
+    const startTime = String(formData.get("start_time") ?? "").trim();
+    const endTime = String(formData.get("end_time") ?? "").trim();
+    if (!startTime || !endTime) {
+      return;
+    }
+
+    await previewWithInput({
+      commands: [
+        {
+          command_id: `cmd_move_${Date.now()}`,
+          action: "move_item",
+          item_id: selectedItem.id,
+          day_date: state.selectedDay,
+          reason: `Adjust time for ${selectedItem.title}`,
+          new_start_at: replaceIsoTime(selectedItem.start_at, startTime),
+          new_end_at: replaceIsoTime(selectedItem.end_at, endTime),
+        },
+      ],
+    });
+    return;
+  }
+
+  if (formMode === "place-search") {
+    const formData = new FormData(form);
+    const query = String(formData.get("place_query") ?? "").trim();
+    if (!query) {
+      return;
+    }
+
+    await searchPlacesForSelectedItem(selectedItem, query);
+  }
+});
+
 async function bootstrap() {
   await loadTrip();
 }
@@ -162,8 +320,13 @@ async function loadTrip() {
   state.preview = null;
   state.previewMeta = null;
   state.provider = payload.workspace.provider ?? "mock";
+  state.assistantProvider = payload.workspace.assistant?.provider ?? "rules";
   state.mapsBrowserApiKey = payload.workspace.maps?.browser_api_key ?? null;
   state.selectedDay = state.selectedDay ?? payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null;
+  state.selectedItemId = inferDefaultSelectedItemId(payload.trip, state.selectedDay, state.selectedItemId);
+  state.placeSearchQuery = "";
+  state.placeSearchResults = [];
+  state.placeSearchItemId = null;
   render();
   setPending(false, "Trip loaded.");
 }
@@ -181,6 +344,7 @@ async function previewWithInput(input) {
 
     state.preview = payload.trip_preview;
     state.previewMeta = payload;
+    state.workspaceTab = "assistant";
     render();
     setPending(false, "Preview ready.");
   } catch (error) {
@@ -196,22 +360,25 @@ function render() {
 
   const selectedDay = activeTrip.days.find((day) => day.date === state.selectedDay) ?? activeTrip.days[0];
   state.selectedDay = selectedDay?.date ?? null;
+  state.selectedItemId = inferDefaultSelectedItemId(activeTrip, state.selectedDay, state.selectedItemId);
+  const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
   const selectedLabel = selectedDay?.label ?? "Day";
 
   elements.tripTitle.textContent = activeTrip.title;
   elements.tripSubtitle.textContent = state.preview
     ? "Preview mode: all panels are rendering from the draft itinerary."
-    : "Shared state across map, timeline, plan, and assistant.";
+    : "Shared state across map, timeline, and the workspace.";
   elements.mapDayLabel.textContent = selectedLabel;
-  elements.planDayLabel.textContent = selectedLabel;
   elements.timelineDayLabel.textContent = selectedLabel;
+  elements.workspaceDayLabel.textContent = selectedLabel;
 
   renderMeta(activeTrip);
   renderDayTabs(activeTrip);
-  renderMap(activeTrip, selectedDay);
-  renderPlan(activeTrip, selectedDay);
-  renderTimeline(activeTrip, selectedDay);
-  renderAssistant(activeTrip, selectedDay);
+  renderWorkspaceShell();
+  renderMap(activeTrip, selectedDay, selectedItem);
+  renderPlan(activeTrip, selectedDay, selectedItem);
+  renderTimeline(activeTrip, selectedDay, selectedItem);
+  renderAssistant(activeTrip, selectedDay, selectedItem);
 }
 
 function renderMeta(trip) {
@@ -222,6 +389,7 @@ function renderMeta(trip) {
     pill(`${items.filter((item) => item.locked).length} locked items`),
     pill(`${trip.conflicts.length} conflict${trip.conflicts.length === 1 ? "" : "s"}`),
     pill(`provider: ${state.provider ?? "mock"}`),
+    pill(`assistant: ${state.assistantProvider}`),
     pill(state.mapsBrowserApiKey ? "map key detected" : "map key missing"),
     state.preview ? pill("Preview active") : "",
   ].join("");
@@ -236,16 +404,32 @@ function renderDayTabs(trip) {
     button.textContent = day.label || `Day ${index + 1}`;
     button.addEventListener("click", () => {
       state.selectedDay = day.date;
+      state.selectedItemId = inferDefaultSelectedItemId(trip, day.date, null);
+      state.workspaceTab = "selection";
+      state.placeSearchResults = [];
+      state.placeSearchQuery = "";
+      state.placeSearchItemId = null;
       render();
     });
     elements.dayTabs.appendChild(button);
   });
 }
 
-function renderMap(trip, day) {
+function renderWorkspaceShell() {
+  elements.workspaceTabs.forEach((button) => {
+    const isActive = button.dataset.workspaceTab === state.workspaceTab;
+    button.classList.toggle("active", isActive);
+  });
+
+  elements.workspaceViews.forEach((view) => {
+    view.classList.toggle("hidden", view.dataset.workspaceView !== state.workspaceTab);
+  });
+}
+
+function renderMap(trip, day, selectedItem) {
   const items = day?.items ?? [];
-  const places = uniquePlacesForDay(trip, items);
-  if (!day || places.length === 0) {
+  const mapPoints = buildMapPoints(trip, items);
+  if (!day || mapPoints.length === 0) {
     destroyGoogleMap();
     elements.mapCanvas.innerHTML = '<div class="map-empty">No map data for this day.</div>';
     clearMapStatus();
@@ -253,7 +437,13 @@ function renderMap(trip, day) {
   }
 
   if (state.provider !== "google") {
-    renderFallbackMap(trip, items, places, "Provider is mock. Restart the server in Google mode to render the live map.");
+    renderFallbackMap(
+      trip,
+      items,
+      mapPoints,
+      selectedItem,
+      "Provider is mock. Restart the server in Google mode to render the live map."
+    );
     return;
   }
 
@@ -261,17 +451,18 @@ function renderMap(trip, day) {
     renderFallbackMap(
       trip,
       items,
-      places,
+      mapPoints,
+      selectedItem,
       "Missing browser map key. Set GOOGLE_MAPS_BROWSER_API_KEY or GOOGLE_MAPS_API_KEY and restart the server.",
       true
     );
     return;
   }
 
-  void renderGoogleMap(trip, items, places);
+  void renderGoogleMap(trip, items, mapPoints, selectedItem);
 }
 
-function renderPlan(trip, day) {
+function renderPlan(trip, day, selectedItem) {
   const flow = buildPlanFlow(trip, day);
   if (flow.length === 0) {
     elements.planPanel.innerHTML = '<div class="plan-empty">No plan for this day.</div>';
@@ -286,12 +477,14 @@ function renderPlan(trip, day) {
             ? `<span class="warning">${block.warningCount} conflict(s)</span>`
             : "";
           const meta = block.meta ? `<div class="plan-meta">${escapeHtml(block.meta)}</div>` : "";
+          const locked = block.locked ? '<span class="lock-badge">Locked</span>' : "";
           return `
-            <article class="plan-row ${flowBlockClass(block)}">
+            <article class="plan-row ${flowBlockClass(block)}${block.itemId === selectedItem?.id ? " selected" : ""}" data-item-id="${block.itemId}">
               <div class="plan-time">${localTime(block.start_at)}-${localTime(block.end_at)}</div>
               <div class="plan-copy">
                 <strong>${escapeHtml(block.title)}</strong>
                 ${meta}
+                ${locked}
                 ${warning}
               </div>
             </article>
@@ -300,9 +493,15 @@ function renderPlan(trip, day) {
         .join("")}
     </div>
   `;
+
+  elements.planPanel.querySelectorAll("[data-item-id]").forEach((row) => {
+    row.addEventListener("click", () => {
+      selectItem(row.dataset.itemId ?? null);
+    });
+  });
 }
 
-function renderTimeline(trip, day) {
+function renderTimeline(trip, day, selectedItem) {
   if (!day) {
     elements.timelinePanel.innerHTML = '<div class="timeline-empty">No timeline for this day.</div>';
     return;
@@ -317,7 +516,10 @@ function renderTimeline(trip, day) {
         ? `<span class="event-alert" title="${block.warningCount} conflict(s)">${block.warningCount}</span>`
         : "";
       return `
-        <div class="event-pill ${flowBlockClass(block)}${compact ? " compact" : ""}" style="left:${left}%;width:${width}%;top:${top}px;">
+        <div
+          class="event-pill ${flowBlockClass(block)}${compact ? " compact" : ""}${block.itemId === selectedItem?.id ? " selected" : ""}${block.locked ? " locked" : ""}"
+          data-item-id="${block.itemId}"
+          style="left:${left}%;width:${width}%;top:${top}px;">
           ${warning}
           <strong>${escapeHtml(timelineBlockTitle(block))}</strong>
           <small>${timelineBlockTime(block, compact)}</small>
@@ -352,13 +554,16 @@ function renderTimeline(trip, day) {
       </div>
     </div>
   `;
+
+  attachTimelineInteractions(day);
 }
 
-function renderAssistant(trip, day) {
+function renderAssistant(trip, day, selectedItem) {
+  elements.focusEditor.innerHTML = renderFocusedEditor(trip, day, selectedItem);
   if (!state.previewMeta) {
     elements.assistantDiff.innerHTML = `
       <div class="diff-summary">No preview yet.</div>
-      <div class="diff-meta">Try the assistant box or use a quick action for ${escapeHtml(day.label)}.</div>
+      <div class="diff-meta">Try the assistant box, drag a timeline card, or edit the focused item for ${escapeHtml(day.label)}.</div>
       ${renderConflicts(trip, day)}
     `;
     elements.applyButton.classList.add("hidden");
@@ -386,6 +591,178 @@ function renderAssistant(trip, day) {
 
   elements.applyButton.classList.remove("hidden");
   elements.rejectButton.classList.remove("hidden");
+}
+
+function renderFocusedEditor(trip, day, selectedItem) {
+  if (!selectedItem) {
+    return '<div class="focus-empty">Select an item from the map, plan, or timeline to edit it.</div>';
+  }
+
+  const disabledAttr = selectedItem.locked ? "disabled" : "";
+  const place = selectedItem.place_id
+    ? trip.places.find((candidate) => candidate.place_id === selectedItem.place_id)
+    : null;
+  const previous = getAdjacentItem(trip, day?.date, selectedItem.id, -1);
+  const next = getAdjacentItem(trip, day?.date, selectedItem.id, 1);
+  const showingSearchResults = state.placeSearchItemId === selectedItem.id;
+  const searchResults = showingSearchResults
+    ? state.placeSearchResults
+        .map((candidate) => {
+          const meta = [
+            candidate.primaryType,
+            candidate.rating ? `★ ${candidate.rating.toFixed(1)}` : "",
+            candidate.formattedAddress ?? "",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return `
+            <button
+              type="button"
+              class="search-result"
+              data-editor-action="replace-place"
+              data-place-id="${candidate.placeId}"
+              data-place-name="${escapeHtml(candidate.name)}">
+              <strong>${escapeHtml(candidate.name)}</strong>
+              <small>${escapeHtml(meta)}</small>
+            </button>
+          `;
+        })
+        .join("")
+    : "";
+
+  return `
+    <section class="focus-card ${eventClass(selectedItem)}">
+      <div class="focus-header">
+        <div>
+          <div class="focus-kicker">Focused item</div>
+          <h3>${escapeHtml(selectedItem.title)}</h3>
+          <div class="focus-meta">${localTime(selectedItem.start_at)}-${localTime(selectedItem.end_at)} · ${escapeHtml(itemTypeLabel(selectedItem))}</div>
+          ${place ? `<div class="focus-meta">${escapeHtml(place.name)}</div>` : ""}
+        </div>
+        <button type="button" class="button ${selectedItem.locked ? "" : "button-primary"}" data-editor-action="toggle-lock">
+          ${selectedItem.locked ? "Unlock item" : "Lock item"}
+        </button>
+      </div>
+
+      <div class="focus-actions">
+        <button type="button" class="action" data-editor-action="move-earlier" ${previous && !selectedItem.locked ? "" : "disabled"}>Move earlier</button>
+        <button type="button" class="action" data-editor-action="move-later" ${next && !selectedItem.locked ? "" : "disabled"}>Move later</button>
+        <span class="focus-hint">Drag this item on the timeline to shift its time.</span>
+      </div>
+
+      <form class="editor-form" data-editor-form="time">
+        <label>
+          <span>Start</span>
+          <input type="time" name="start_time" value="${localTime(selectedItem.start_at)}" ${disabledAttr}>
+        </label>
+        <label>
+          <span>End</span>
+          <input type="time" name="end_time" value="${localTime(selectedItem.end_at)}" ${disabledAttr}>
+        </label>
+        <button type="submit" class="button button-primary" ${disabledAttr}>Preview time change</button>
+      </form>
+
+      <form class="editor-form editor-form-search" data-editor-form="place-search">
+        <label class="editor-search">
+          <span>Replace place</span>
+          <input
+            type="search"
+            name="place_query"
+            value="${showingSearchResults ? escapeHtml(state.placeSearchQuery) : ""}"
+            placeholder="Search a replacement venue"
+            ${disabledAttr}>
+        </label>
+        <button type="submit" class="button" ${disabledAttr}>Search</button>
+      </form>
+
+      ${searchResults ? `<div class="search-results">${searchResults}</div>` : ""}
+    </section>
+  `;
+}
+
+async function searchPlacesForSelectedItem(selectedItem, query) {
+  setPending(true, `Searching places for ${selectedItem.title}…`);
+  try {
+    const payload = await requestJson(
+      `/api/places/search?q=${encodeURIComponent(query)}&type=${encodeURIComponent(inferSearchTypeForItem(selectedItem) ?? "")}&page_size=5`
+    );
+    state.placeSearchQuery = query;
+    state.placeSearchResults = payload.candidates ?? [];
+    state.placeSearchItemId = selectedItem.id;
+    render();
+    setPending(false, `Found ${state.placeSearchResults.length} place candidate(s).`);
+  } catch (error) {
+    setPending(false, error.message);
+  }
+}
+
+function inferSearchTypeForItem(item) {
+  if (item.kind === "meal") {
+    return "restaurant";
+  }
+
+  if (item.kind === "check_in" || item.kind === "check_out" || item.kind === "lodging") {
+    return "hotel";
+  }
+
+  return "";
+}
+
+function inferDefaultSelectedItemId(trip, dayDate, preferredItemId) {
+  const day = trip?.days?.find((candidate) => candidate.date === dayDate) ?? trip?.days?.[0];
+  if (!day) {
+    return null;
+  }
+
+  if (preferredItemId && day.items.some((item) => item.id === preferredItemId)) {
+    return preferredItemId;
+  }
+
+  return day.items[0]?.id ?? null;
+}
+
+function getSelectedItem(trip, dayDate, itemId) {
+  if (!trip || !dayDate || !itemId) {
+    return null;
+  }
+
+  const day = trip.days.find((candidate) => candidate.date === dayDate);
+  return day?.items.find((item) => item.id === itemId) ?? null;
+}
+
+function selectItem(itemId) {
+  if (!itemId) {
+    return;
+  }
+
+  if (state.selectedItemId !== itemId) {
+    state.placeSearchQuery = "";
+    state.placeSearchResults = [];
+    state.placeSearchItemId = null;
+  }
+
+  state.selectedItemId = itemId;
+  state.workspaceTab = "selection";
+  render();
+}
+
+function getAdjacentItem(trip, dayDate, itemId, direction) {
+  if (!trip || !dayDate || !itemId) {
+    return null;
+  }
+
+  const day = trip.days.find((candidate) => candidate.date === dayDate);
+  if (!day) {
+    return null;
+  }
+
+  const items = day.items.slice().sort((left, right) => new Date(left.start_at).getTime() - new Date(right.start_at).getTime());
+  const index = items.findIndex((item) => item.id === itemId);
+  if (index === -1) {
+    return null;
+  }
+
+  return items[index + direction] ?? null;
 }
 
 function renderConflicts(trip, day) {
@@ -451,6 +828,103 @@ function buildQuickActionInput(action, dayDate) {
   }
 }
 
+function attachTimelineInteractions(day) {
+  const laneGrid = elements.timelinePanel.querySelector(".lane-grid");
+  if (!laneGrid || !day) {
+    return;
+  }
+
+  elements.timelinePanel.querySelectorAll(".event-pill[data-item-id]").forEach((pill) => {
+    pill.addEventListener("click", () => {
+      selectItem(pill.dataset.itemId ?? null);
+    });
+
+    pill.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || pill.classList.contains("locked")) {
+        return;
+      }
+
+      const activeTrip = getActiveTrip();
+      const item = getSelectedItem(activeTrip, day.date, pill.dataset.itemId ?? null);
+      if (!item || item.locked) {
+        return;
+      }
+
+      event.preventDefault();
+      timelineDrag.active = {
+        itemId: item.id,
+        dayDate: day.date,
+        startX: event.clientX,
+        laneWidth: laneGrid.getBoundingClientRect().width,
+        originalStartAt: item.start_at,
+        originalEndAt: item.end_at,
+        pill,
+        dragging: false,
+      };
+
+      document.addEventListener("pointermove", handleTimelinePointerMove);
+      document.addEventListener("pointerup", handleTimelinePointerUp, { once: true });
+    });
+  });
+}
+
+function handleTimelinePointerMove(event) {
+  const drag = timelineDrag.active;
+  if (!drag) {
+    return;
+  }
+
+  const deltaX = event.clientX - drag.startX;
+  if (!drag.dragging && Math.abs(deltaX) >= 6) {
+    drag.dragging = true;
+    drag.pill.classList.add("dragging");
+  }
+
+  if (!drag.dragging) {
+    return;
+  }
+
+  drag.pill.style.transform = `translateX(${deltaX}px)`;
+}
+
+async function handleTimelinePointerUp(event) {
+  const drag = timelineDrag.active;
+  timelineDrag.active = null;
+  document.removeEventListener("pointermove", handleTimelinePointerMove);
+
+  if (!drag) {
+    return;
+  }
+
+  drag.pill.classList.remove("dragging");
+  drag.pill.style.transform = "";
+
+  const deltaX = event.clientX - drag.startX;
+  if (Math.abs(deltaX) < 6) {
+    return;
+  }
+
+  const rawMinutes = (deltaX / Math.max(1, drag.laneWidth)) * TIMELINE_TOTAL_MINUTES;
+  const deltaMinutes = snapMinutes(rawMinutes, 15);
+  if (!deltaMinutes) {
+    return;
+  }
+
+  await previewWithInput({
+    commands: [
+      {
+        command_id: `cmd_drag_${Date.now()}`,
+        action: "move_item",
+        item_id: drag.itemId,
+        day_date: drag.dayDate,
+        reason: "Adjust item time from timeline drag",
+        new_start_at: shiftIsoByMinutes(drag.originalStartAt, deltaMinutes),
+        new_end_at: shiftIsoByMinutes(drag.originalEndAt, deltaMinutes),
+      },
+    ],
+  });
+}
+
 function getActiveTrip() {
   return state.preview ?? state.trip;
 }
@@ -481,17 +955,49 @@ function pill(text) {
   return `<span class="pill">${escapeHtml(text)}</span>`;
 }
 
-function uniquePlacesForDay(trip, items) {
-  const seen = new Set();
+function buildMapPoints(trip, items) {
+  const placeById = new Map(trip.places.map((place) => [place.place_id, place]));
+  const countsByPlace = new Map();
+
   return items
-    .filter((item) => item.place_id && !seen.has(item.place_id) && seen.add(item.place_id))
-    .map((item) => trip.places.find((place) => place.place_id === item.place_id))
+    .filter((item) => item.place_id)
+    .map((item, index) => {
+      const place = placeById.get(item.place_id);
+      if (!place) {
+        return null;
+      }
+
+      const occurrence = countsByPlace.get(place.place_id) ?? 0;
+      countsByPlace.set(place.place_id, occurrence + 1);
+      const location = jitterMapPoint(place, occurrence);
+
+      return {
+        item,
+        place,
+        label: String(index + 1),
+        lat: location.lat,
+        lng: location.lng,
+      };
+    })
     .filter(Boolean);
 }
 
-function computeMapPositions(places) {
-  const lats = places.map((place) => place.lat);
-  const lngs = places.map((place) => place.lng);
+function jitterMapPoint(place, occurrence) {
+  if (!occurrence) {
+    return { lat: place.lat, lng: place.lng };
+  }
+
+  const angle = occurrence * 2.1;
+  const radius = 0.0022 * Math.min(occurrence, 3);
+  return {
+    lat: place.lat + Math.sin(angle) * radius,
+    lng: place.lng + Math.cos(angle) * radius,
+  };
+}
+
+function computeMapPositions(mapPoints) {
+  const lats = mapPoints.map((point) => point.lat);
+  const lngs = mapPoints.map((point) => point.lng);
   const minLat = Math.min(...lats);
   const maxLat = Math.max(...lats);
   const minLng = Math.min(...lngs);
@@ -500,67 +1006,74 @@ function computeMapPositions(places) {
   const lngPadding = Math.max(0.01, (maxLng - minLng) * 0.25);
   const positions = new Map();
 
-  places.forEach((place) => {
-    const x = 12 + (((place.lng - (minLng - lngPadding)) / (maxLng - minLng + lngPadding * 2)) * 76);
-    const y = 14 + (((maxLat + latPadding - place.lat) / (maxLat - minLat + latPadding * 2)) * 72);
-    positions.set(place.place_id, { x, y });
+  mapPoints.forEach((point) => {
+    const x = 12 + (((point.lng - (minLng - lngPadding)) / (maxLng - minLng + lngPadding * 2)) * 76);
+    const y = 14 + (((maxLat + latPadding - point.lat) / (maxLat - minLat + latPadding * 2)) * 72);
+    positions.set(point.item.id, { x, y });
   });
 
   return positions;
 }
 
-function renderFallbackMap(trip, items, places, message = "", isError = false) {
+function renderFallbackMap(trip, items, mapPoints, selectedItem, message = "", isError = false) {
   destroyGoogleMap();
-  if (places.length === 0) {
+  if (mapPoints.length === 0) {
     elements.mapCanvas.innerHTML = '<div class="map-empty">No map data for this day.</div>';
     setMapStatus(message, isError);
     return;
   }
 
-  const positions = computeMapPositions(places);
+  const positions = computeMapPositions(mapPoints);
   const itemIds = new Set(items.map((item) => item.id));
   const routes = trip.routes.filter(
     (route) => itemIds.has(route.from_item_id) && itemIds.has(route.to_item_id)
   );
   const routeHtml = routes
     .map((route) => {
-      const fromItem = items.find((item) => item.id === route.from_item_id);
-      const toItem = items.find((item) => item.id === route.to_item_id);
-      const fromPlace = fromItem?.place_id ? positions.get(fromItem.place_id) : null;
-      const toPlace = toItem?.place_id ? positions.get(toItem.place_id) : null;
-      if (!fromPlace || !toPlace) {
+      const fromPosition = positions.get(route.from_item_id);
+      const toPosition = positions.get(route.to_item_id);
+      if (!fromPosition || !toPosition) {
         return "";
       }
 
-      const deltaX = toPlace.x - fromPlace.x;
-      const deltaY = toPlace.y - fromPlace.y;
+      const deltaX = toPosition.x - fromPosition.x;
+      const deltaY = toPosition.y - fromPosition.y;
       const width = Math.sqrt(deltaX ** 2 + deltaY ** 2);
       const angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
-      return `<div class="route ${route.mode}" style="left:${fromPlace.x}%;top:${fromPlace.y}%;width:${width}%;transform:rotate(${angle}deg);"></div>`;
+      return `<div class="route ${route.mode}${routeTouchesSelected(route, selectedItem?.id) ? " selected" : ""}" style="left:${fromPosition.x}%;top:${fromPosition.y}%;width:${width}%;transform:rotate(${angle}deg);"></div>`;
     })
     .join("");
 
-  const markerHtml = items
-    .filter((item) => item.place_id)
-    .map((item) => {
-      const position = positions.get(item.place_id);
-      const place = trip.places.find((candidate) => candidate.place_id === item.place_id);
-      if (!position || !place) {
+  const markerHtml = mapPoints
+    .map((point) => {
+      const position = positions.get(point.item.id);
+      if (!position) {
         return "";
       }
 
       return `
-        <div class="marker ${markerClass(place.category)}" style="left:${position.x}%;top:${position.y}%;"></div>
-        <div class="marker-label" style="left:${position.x}%;top:${position.y}%;">${escapeHtml(shortLabel(item.title))}</div>
+        <button
+          type="button"
+          class="marker ${markerClass(point.place.category)}${point.item.id === selectedItem?.id ? " selected" : ""}"
+          data-map-item-id="${point.item.id}"
+          style="left:${position.x}%;top:${position.y}%;">
+          <span>${escapeHtml(point.label)}</span>
+        </button>
+        <div class="marker-label${point.item.id === selectedItem?.id ? " selected" : ""}" style="left:${position.x}%;top:${position.y}%;">${escapeHtml(shortLabel(timelineBlockTitle(makeItemFlowBlock(point.item, new Map([[point.place.place_id, point.place]])))))}</div>
       `;
     })
     .join("");
 
   elements.mapCanvas.innerHTML = `${routeHtml}${markerHtml}`;
+  elements.mapCanvas.querySelectorAll("[data-map-item-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectItem(button.dataset.mapItemId ?? null);
+    });
+  });
   setMapStatus(message, isError);
 }
 
-async function renderGoogleMap(trip, items, places) {
+async function renderGoogleMap(trip, items, mapPoints, selectedItem) {
   const renderToken = ++mapRuntime.renderToken;
   setMapStatus("Loading Google Map…");
 
@@ -571,7 +1084,7 @@ async function renderGoogleMap(trip, items, places) {
     }
 
     ensureGoogleMap(maps);
-    drawGoogleMap(trip, items, places, maps);
+    drawGoogleMap(trip, items, mapPoints, selectedItem, maps);
     clearMapStatus();
   } catch (error) {
     if (renderToken !== mapRuntime.renderToken) {
@@ -581,7 +1094,8 @@ async function renderGoogleMap(trip, items, places) {
     renderFallbackMap(
       trip,
       items,
-      places,
+      mapPoints,
+      selectedItem,
       error instanceof Error
         ? error.message
         : "Failed to load Google Maps JavaScript API.",
@@ -608,64 +1122,55 @@ function ensureGoogleMap(maps) {
   mapRuntime.infoWindow = new maps.InfoWindow();
 }
 
-function drawGoogleMap(trip, items, places, maps) {
+function drawGoogleMap(trip, items, mapPoints, selectedItem, maps) {
   clearGoogleMapOverlays();
 
   const itemIds = new Set(items.map((item) => item.id));
   const routes = trip.routes.filter(
     (route) => itemIds.has(route.from_item_id) && itemIds.has(route.to_item_id)
   );
-  const placeById = new Map(trip.places.map((place) => [place.place_id, place]));
+  const pointByItemId = new Map(mapPoints.map((point) => [point.item.id, point]));
   const bounds = new maps.LatLngBounds();
 
-  places.forEach((place, index) => {
-    bounds.extend({ lat: place.lat, lng: place.lng });
+  mapPoints.forEach((point) => {
+    bounds.extend({ lat: point.lat, lng: point.lng });
     const marker = new maps.Marker({
       map: mapRuntime.map,
-      position: { lat: place.lat, lng: place.lng },
-      title: place.name,
+      position: { lat: point.lat, lng: point.lng },
+      title: point.item.title,
       label: {
-        text: String(index + 1),
-        color: "#ffffff",
+        text: point.label,
+        color: point.item.id === selectedItem?.id ? "#145a4a" : "#ffffff",
         fontWeight: "700",
       },
       icon: {
         path: maps.SymbolPath.CIRCLE,
-        scale: 11,
-        fillColor: markerColor(place.category),
+        scale: point.item.id === selectedItem?.id ? 13 : 11,
+        fillColor: markerColor(point.place.category),
         fillOpacity: 1,
-        strokeColor: "#ffffff",
-        strokeWeight: 2,
+        strokeColor: point.item.id === selectedItem?.id ? "#145a4a" : "#ffffff",
+        strokeWeight: point.item.id === selectedItem?.id ? 3 : 2,
       },
+      zIndex: point.item.id === selectedItem?.id ? 9 : 4,
     });
 
     marker.addListener("click", () => {
-      mapRuntime.infoWindow?.setContent(`
-        <div style="font-family:Georgia, serif; min-width:180px;">
-          <strong>${escapeHtml(place.name)}</strong><br>
-          <span>${escapeHtml(place.formatted_address ?? place.address ?? "")}</span>
-        </div>
-      `);
-      mapRuntime.infoWindow?.open({
-        anchor: marker,
-        map: mapRuntime.map,
-      });
+      selectItem(point.item.id);
     });
 
     mapRuntime.markers.push(marker);
   });
 
   routes.forEach((route) => {
-    const fromItem = items.find((item) => item.id === route.from_item_id);
-    const toItem = items.find((item) => item.id === route.to_item_id);
-    const fromPlace = fromItem?.place_id ? placeById.get(fromItem.place_id) : null;
-    const toPlace = toItem?.place_id ? placeById.get(toItem.place_id) : null;
-    if (!fromPlace || !toPlace) {
+    const fromPoint = pointByItemId.get(route.from_item_id);
+    const toPoint = pointByItemId.get(route.to_item_id);
+    if (!fromPoint || !toPoint) {
       return;
     }
 
     const style = routeStyle(route.mode);
-    const path = buildRoutePath(maps, route, fromPlace, toPlace);
+    const isSelected = routeTouchesSelected(route, selectedItem?.id);
+    const path = buildRoutePath(maps, route, fromPoint, toPoint);
     path.forEach((point) => {
       bounds.extend(point);
     });
@@ -675,17 +1180,17 @@ function drawGoogleMap(trip, items, places, maps) {
       path,
       geodesic: false,
       strokeColor: style.strokeColor,
-      strokeOpacity: style.strokeOpacity,
-      strokeWeight: style.strokeWeight,
+      strokeOpacity: isSelected ? 1 : style.strokeOpacity,
+      strokeWeight: isSelected ? style.strokeWeight + 2 : style.strokeWeight,
       icons: style.icons,
-      zIndex: 1,
+      zIndex: isSelected ? 3 : 1,
     });
 
     mapRuntime.polylines.push(polyline);
   });
 
-  if (places.length === 1) {
-    mapRuntime.map?.setCenter({ lat: places[0].lat, lng: places[0].lng });
+  if (mapPoints.length === 1) {
+    mapRuntime.map?.setCenter({ lat: mapPoints[0].lat, lng: mapPoints[0].lng });
     mapRuntime.map?.setZoom(13);
     return;
   }
@@ -1063,12 +1568,14 @@ function makeItemFlowBlock(item, placesById) {
   const place = item.place_id ? placesById.get(item.place_id) : undefined;
   return {
     id: `flow_item_${item.id}`,
+    itemId: item.id,
     kind: item.kind,
     title: item.title,
     timelineTitle: buildTimelineItemTitle(item, place),
     start_at: item.start_at,
     end_at: item.end_at,
     warningCount: item.validation_conflict_ids?.length ?? 0,
+    locked: item.locked,
     meta: buildItemMeta(item, place),
     className: eventClass(item),
   };
@@ -1197,6 +1704,63 @@ function shortLabel(value) {
 
 function exactDurationMinutes(startAt, endAt) {
   return Math.max(0, Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60000));
+}
+
+function replaceIsoTime(iso, time) {
+  const [hours, minutes] = time.split(":").map((value) => Number.parseInt(value, 10));
+  const offsetMinutes = parseOffsetMinutes(iso);
+  const date = new Date(iso);
+  const shifted = new Date(date.getTime() + offsetMinutes * 60000);
+  shifted.setUTCHours(hours, minutes, 0, 0);
+  return formatIsoWithOffset(new Date(shifted.getTime() - offsetMinutes * 60000), offsetMinutes);
+}
+
+function shiftIsoByMinutes(iso, deltaMinutes) {
+  const offsetMinutes = parseOffsetMinutes(iso);
+  const nextDate = new Date(new Date(iso).getTime() + deltaMinutes * 60000);
+  return formatIsoWithOffset(nextDate, offsetMinutes);
+}
+
+function parseOffsetMinutes(iso) {
+  if (iso.endsWith("Z")) {
+    return 0;
+  }
+
+  const match = iso.match(/([+-])(\d{2}):(\d{2})$/u);
+  if (!match) {
+    return 0;
+  }
+
+  const sign = match[1] === "-" ? -1 : 1;
+  return sign * (Number.parseInt(match[2], 10) * 60 + Number.parseInt(match[3], 10));
+}
+
+function formatIsoWithOffset(date, offsetMinutes) {
+  const shifted = new Date(date.getTime() + offsetMinutes * 60000);
+  const year = shifted.getUTCFullYear();
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(shifted.getUTCDate()).padStart(2, "0");
+  const hour = String(shifted.getUTCHours()).padStart(2, "0");
+  const minute = String(shifted.getUTCMinutes()).padStart(2, "0");
+  const second = String(shifted.getUTCSeconds()).padStart(2, "0");
+
+  if (offsetMinutes === 0) {
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
+  }
+
+  const sign = offsetMinutes < 0 ? "-" : "+";
+  const absolute = Math.abs(offsetMinutes);
+  const offsetHour = String(Math.floor(absolute / 60)).padStart(2, "0");
+  const offsetMinute = String(absolute % 60).padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}${sign}${offsetHour}:${offsetMinute}`;
+}
+
+function snapMinutes(value, step) {
+  return Math.round(value / step) * step;
+}
+
+function routeTouchesSelected(route, selectedItemId) {
+  return Boolean(selectedItemId && (route.from_item_id === selectedItemId || route.to_item_id === selectedItemId));
 }
 
 function capitalize(value) {

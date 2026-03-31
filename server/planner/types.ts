@@ -162,6 +162,7 @@ export type PlannerCommandAction =
   | "lock_item"
   | "unlock_item"
   | "move_item"
+  | "reorder_item"
   | "replace_place"
   | "insert_item"
   | "delete_item"

@@ -1,6 +1,8 @@
 import {
+  FallbackCommandTranslator,
   InMemoryPreviewRepository,
   InMemoryTripRepository,
+  OpenAiCommandTranslator,
   PlannerService,
   recomputeDerivedState,
 } from "../planner/index.ts";
@@ -13,7 +15,9 @@ import {
   SAMPLE_TRIP_ID,
 } from "../demo/sample-trip.ts";
 import {
+  resolveCommandPlannerMode,
   resolveMapsBrowserApiKey,
+  resolveOpenAiConfig,
   resolveRuntimeEnv,
   resolveRuntimeMode,
 } from "./runtime-config.mjs";
@@ -22,6 +26,8 @@ export async function createRuntime() {
   const env = resolveRuntimeEnv();
   const provider = resolveRuntimeMode(env);
   const mapsBrowserApiKey = resolveMapsBrowserApiKey(env);
+  const commandPlannerMode = resolveCommandPlannerMode(env);
+  const openAiConfig = resolveOpenAiConfig(env);
   const catalog = createSamplePlaceCatalog();
   const seedTrip = createSampleTrip();
   const adapters =
@@ -42,15 +48,30 @@ export async function createRuntime() {
 
   const tripRepository = new InMemoryTripRepository([seedTrip]);
   const previewRepository = new InMemoryPreviewRepository();
+  const ruleTranslator = new RuleBasedCommandTranslator();
+  const commandTranslator =
+    commandPlannerMode === "openai" && openAiConfig.apiKey
+      ? new FallbackCommandTranslator(
+          new OpenAiCommandTranslator({
+            apiKey: openAiConfig.apiKey,
+            model: openAiConfig.model,
+            baseUrl: openAiConfig.baseUrl,
+          }),
+          ruleTranslator
+        )
+      : ruleTranslator;
+  const assistantProvider =
+    commandPlannerMode === "openai" && openAiConfig.apiKey ? "openai" : "rules";
   const plannerService = new PlannerService(tripRepository, previewRepository, {
     placesAdapter,
     routesAdapter,
-    commandTranslator: new RuleBasedCommandTranslator(),
+    commandTranslator,
     clock: () => new Date(),
   });
 
   const runtime = {
     provider,
+    assistantProvider,
     mapsBrowserApiKey,
     sampleTripId: SAMPLE_TRIP_ID,
     catalog,

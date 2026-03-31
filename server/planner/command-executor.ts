@@ -62,6 +62,9 @@ async function executeCommand(
         }
       });
       return;
+    case "reorder_item":
+      reorderItem(itinerary, command);
+      return;
     case "delete_item":
       deleteItem(itinerary, command);
       return;
@@ -117,6 +120,75 @@ function deleteItem(itinerary: Itinerary, command: PlannerCommand): void {
   itinerary.routes = itinerary.routes.filter(
     (route) => route.from_item_id !== location.item.id && route.to_item_id !== location.item.id
   );
+}
+
+function reorderItem(itinerary: Itinerary, command: PlannerCommand): void {
+  const location = findItemLocation(itinerary, command.item_id);
+  const targetLocation = findItemLocation(itinerary, command.target_item_id);
+  const position = typeof command.payload?.position === "string" ? command.payload.position : null;
+
+  if (!location || !targetLocation || !position || !["before", "after"].includes(position)) {
+    throw new PlannerError(
+      "invalid_command",
+      "reorder_item requires item_id, target_item_id, and payload.position of before or after."
+    );
+  }
+
+  if (location.day.date !== targetLocation.day.date) {
+    throw new PlannerError("invalid_command", "reorder_item currently supports reordering within the same day only.");
+  }
+
+  if (location.item.id === targetLocation.item.id) {
+    return;
+  }
+
+  assertItemEditable(location.item, command);
+
+  const ordered = location.day.items
+    .slice()
+    .sort((left, right) => compareIso(left.start_at, right.start_at))
+    .filter((item) => item.id !== location.item.id);
+  const targetIndex = ordered.findIndex((item) => item.id === targetLocation.item.id);
+  if (targetIndex === -1) {
+    throw new PlannerError("invalid_command", `Target item not found in day: ${targetLocation.item.id}`);
+  }
+
+  const insertIndex = position === "before" ? targetIndex : targetIndex + 1;
+  ordered.splice(insertIndex, 0, location.item);
+  const movedIndex = ordered.findIndex((item) => item.id === location.item.id);
+  const movedDuration =
+    location.item.duration_minutes ?? Math.max(0, minutesBetween(location.item.start_at, location.item.end_at));
+  const previous = movedIndex > 0 ? ordered[movedIndex - 1] : null;
+  const next = movedIndex < ordered.length - 1 ? ordered[movedIndex + 1] : null;
+  const desiredStart =
+    previous?.end_at ??
+    (position === "before" && next ? next.start_at : location.item.start_at);
+
+  location.item.start_at = desiredStart;
+  location.item.end_at = addMinutesToIso(desiredStart, movedDuration);
+
+  let cursor = location.item.end_at;
+  for (let index = movedIndex + 1; index < ordered.length; index += 1) {
+    const item = ordered[index];
+    if (item.locked) {
+      if (compareIso(item.start_at, cursor) < 0) {
+        throw new PlannerError(
+          "locked_item_violation",
+          `${item.title} is locked, so the requested reorder would force it to move.`
+        );
+      }
+      cursor = item.end_at;
+      continue;
+    }
+
+    if (compareIso(item.start_at, cursor) < 0) {
+      const duration = item.duration_minutes ?? Math.max(0, minutesBetween(item.start_at, item.end_at));
+      item.start_at = cursor;
+      item.end_at = addMinutesToIso(cursor, duration);
+    }
+
+    cursor = item.end_at;
+  }
 }
 
 async function replacePlace(

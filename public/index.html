@@ -36,43 +36,59 @@
             <span class="legend-chip">Dashed: walk</span>
           </div>
         </article>
+        <section class="right-rail">
+          <article class="panel timeline">
+            <h2>Timeline · <span id="timelineDayLabel">Day</span></h2>
+            <div id="timelinePanel"></div>
+          </article>
 
-        <article class="panel plan">
-          <h2>Plan · <span id="planDayLabel">Day</span></h2>
-          <div id="planPanel"></div>
-        </article>
-
-        <article class="panel timeline">
-          <h2>Timeline · <span id="timelineDayLabel">Day</span></h2>
-          <div id="timelinePanel"></div>
-        </article>
-
-        <article class="panel assistant">
-          <h2>Assistant</h2>
-          <form id="assistantForm" class="assistant-form">
-            <textarea
-              id="assistantInput"
-              class="chat-input"
-              placeholder="Try: 把周六晚餐换成评分高一点的美式餐厅"
-            ></textarea>
-            <div class="assistant-toolbar">
-              <button type="submit" class="button button-primary">Preview</button>
-              <button type="button" class="button" id="resetButton">Reset sample trip</button>
+          <article class="panel workspace">
+            <div class="workspace-header">
+              <h2>Workspace · <span id="workspaceDayLabel">Day</span></h2>
+              <div class="workspace-tabs">
+                <button type="button" class="workspace-tab active" data-workspace-tab="selection">Selection</button>
+                <button type="button" class="workspace-tab" data-workspace-tab="plan">Plan</button>
+                <button type="button" class="workspace-tab" data-workspace-tab="assistant">Assistant</button>
+              </div>
             </div>
-          </form>
-          <div class="quick-actions">
-            <button type="button" class="action" data-quick-action="replace-dinner">Replace dinner</button>
-            <button type="button" class="action" data-quick-action="reoptimize-day">Reoptimize day</button>
-            <button type="button" class="action" data-quick-action="add-lunch">Add lunch</button>
-            <button type="button" class="action" data-quick-action="relax-day">Relax schedule</button>
-          </div>
-          <div class="assistant-status" id="assistantStatus">Loading trip…</div>
-          <div class="diff" id="assistantDiff"></div>
-          <div class="assistant-toolbar">
-            <button type="button" class="button button-primary hidden" id="applyButton">Apply preview</button>
-            <button type="button" class="button hidden" id="rejectButton">Reject preview</button>
-          </div>
-        </article>
+
+            <div class="workspace-body">
+              <section class="workspace-view" data-workspace-view="selection">
+                <div class="focus-editor" id="focusEditor"></div>
+              </section>
+
+              <section class="workspace-view hidden" data-workspace-view="plan">
+                <div id="planPanel"></div>
+              </section>
+
+              <section class="workspace-view hidden assistant" data-workspace-view="assistant">
+                <form id="assistantForm" class="assistant-form">
+                  <textarea
+                    id="assistantInput"
+                    class="chat-input"
+                    placeholder="Try: 把周六晚餐换成评分高一点的美式餐厅"
+                  ></textarea>
+                  <div class="assistant-toolbar">
+                    <button type="submit" class="button button-primary">Preview</button>
+                    <button type="button" class="button" id="resetButton">Reset sample trip</button>
+                  </div>
+                </form>
+                <div class="quick-actions">
+                  <button type="button" class="action" data-quick-action="replace-dinner">Replace dinner</button>
+                  <button type="button" class="action" data-quick-action="reoptimize-day">Reoptimize day</button>
+                  <button type="button" class="action" data-quick-action="add-lunch">Add lunch</button>
+                  <button type="button" class="action" data-quick-action="relax-day">Relax schedule</button>
+                </div>
+                <div class="assistant-status" id="assistantStatus">Loading trip…</div>
+                <div class="diff" id="assistantDiff"></div>
+                <div class="assistant-toolbar">
+                  <button type="button" class="button button-primary hidden" id="applyButton">Apply preview</button>
+                  <button type="button" class="button hidden" id="rejectButton">Reject preview</button>
+                </div>
+              </section>
+            </div>
+          </article>
+        </section>
       </section>
     </main>
     <script type="module" src="/app.js"></script>

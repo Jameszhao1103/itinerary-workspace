@@ -42,3 +42,50 @@ test("planner service can preview and apply a dinner replacement", async () => {
     }
   }
 });
+
+test("planner service can reorder an item within the day", async () => {
+  const previousProvider = process.env.PLANNER_PROVIDER;
+  process.env.PLANNER_PROVIDER = "mock";
+  const runtime = await createRuntime();
+  try {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+
+    const preview = await runtime.plannerService.previewCommand({
+      tripId: runtime.sampleTripId,
+      baseVersion: trip.version,
+      input: {
+        commands: [
+          {
+            command_id: "cmd_reorder_test",
+            action: "reorder_item",
+            day_date: "2026-04-12",
+            item_id: "item_lunch",
+            target_item_id: "item_walk_river_arts",
+            reason: "Move lunch later in the afternoon",
+            payload: {
+              position: "after",
+            },
+          },
+        ],
+      },
+    });
+
+    const day = preview.trip_preview.days.find((item) => item.date === "2026-04-12");
+    const walkIndex = day.items.findIndex((item) => item.id === "item_walk_river_arts");
+    const lunch = day.items.find((item) => item.id === "item_lunch");
+    const lunchIndex = day.items.findIndex((item) => item.id === "item_lunch");
+
+    assert.ok(day);
+    assert.ok(lunch);
+    assert.ok(walkIndex !== -1);
+    assert.ok(lunchIndex > walkIndex);
+    assert.equal(lunch.start_at, "2026-04-12T16:00:00-04:00");
+  } finally {
+    if (previousProvider === undefined) {
+      delete process.env.PLANNER_PROVIDER;
+    } else {
+      process.env.PLANNER_PROVIDER = previousProvider;
+    }
+  }
+});
