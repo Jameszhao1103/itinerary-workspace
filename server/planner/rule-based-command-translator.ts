@@ -3,9 +3,13 @@ import { createId } from "./ids.ts";
 import type { Itinerary, PlannerCommand, PlannerCommandTranslator } from "./types.ts";
 
 export class RuleBasedCommandTranslator implements PlannerCommandTranslator {
-  async translate(input: { trip: Itinerary; utterance: string }): Promise<PlannerCommand[]> {
+  async translate(input: {
+    trip: Itinerary;
+    utterance: string;
+    context?: { selected_day?: string; selected_item_id?: string };
+  }): Promise<PlannerCommand[]> {
     const lower = input.utterance.toLowerCase();
-    const day = inferTargetDay(input.trip, lower);
+    const day = inferTargetDay(input.trip, lower, input.context?.selected_day);
 
     if (matchesAny(lower, ["replace", "swap", "换", "替换"]) && matchesAny(lower, ["dinner", "晚餐"])) {
       const dinner = findMeal(input.trip, day.date, "dinner");
@@ -94,14 +98,14 @@ export class RuleBasedCommandTranslator implements PlannerCommandTranslator {
   }
 }
 
-function inferTargetDay(trip: Itinerary, utterance: string) {
+function inferTargetDay(trip: Itinerary, utterance: string, selectedDay?: string) {
   if (utterance.includes("day 3") || utterance.includes("第三天")) {
     return trip.days[2] ?? trip.days[0];
   }
   if (utterance.includes("day 2") || utterance.includes("第二天")) {
     return trip.days[1] ?? trip.days[0];
   }
-  return trip.days[0];
+  return trip.days.find((day) => day.date === selectedDay) ?? trip.days[0];
 }
 
 function findMeal(trip: Itinerary, dayDate: string, category: string) {

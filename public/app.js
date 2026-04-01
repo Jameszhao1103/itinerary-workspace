@@ -334,11 +334,18 @@ async function loadTrip() {
 async function previewWithInput(input) {
   setPending(true, "Previewing change…");
   try {
+    const context = {
+      selected_day: input.context?.selected_day ?? state.selectedDay ?? undefined,
+      selected_item_id: input.context?.selected_item_id ?? state.selectedItemId ?? undefined,
+    };
     const payload = await requestJson(`/api/trips/${tripId}/commands/preview`, {
       method: "POST",
       body: {
         base_version: state.trip.version,
-        input,
+        input: {
+          ...input,
+          context,
+        },
       },
     });
 
@@ -785,7 +792,7 @@ function buildQuickActionInput(action, dayDate) {
   switch (action) {
     case "replace-dinner":
       return {
-        utterance: "把周六晚餐换成评分高一点的美式餐厅",
+        utterance: "把当前这天的晚餐换成评分高一点的美式餐厅",
       };
     case "reoptimize-day":
       return {

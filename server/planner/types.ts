@@ -201,6 +201,12 @@ export type PlannerCommand = {
 export type PlannerCommandInput = {
   utterance?: string;
   commands?: PlannerCommand[];
+  context?: PlannerCommandContext;
+};
+
+export type PlannerCommandContext = {
+  selected_day?: string;
+  selected_item_id?: string;
 };
 
 export type PlannerPreviewRequest = {
@@ -264,7 +270,11 @@ export type PlannerApplyResponse = {
 };
 
 export interface PlannerCommandTranslator {
-  translate(input: { trip: Itinerary; utterance: string }): Promise<PlannerCommand[]>;
+  translate(input: {
+    trip: Itinerary;
+    utterance: string;
+    context?: PlannerCommandContext;
+  }): Promise<PlannerCommand[]>;
 }
 
 export type PlannerDerivationContext = {

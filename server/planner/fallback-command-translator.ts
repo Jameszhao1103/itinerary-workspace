@@ -10,7 +10,11 @@ export class FallbackCommandTranslator implements PlannerCommandTranslator {
     this.fallback = fallback;
   }
 
-  async translate(input: { trip: Itinerary; utterance: string }): Promise<PlannerCommand[]> {
+  async translate(input: {
+    trip: Itinerary;
+    utterance: string;
+    context?: { selected_day?: string; selected_item_id?: string };
+  }): Promise<PlannerCommand[]> {
     try {
       return await this.primary.translate(input);
     } catch (error) {

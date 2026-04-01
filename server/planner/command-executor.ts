@@ -5,9 +5,11 @@ import {
   addMinutesToIso,
   combineLocalDateTime,
   compareIso,
+  compareLocalTime,
   extractLocalDate,
   extractLocalTime,
   minutesBetween,
+  weekdayFromDate,
 } from "./time.ts";
 import type {
   CommandExecutionContext,
@@ -15,6 +17,7 @@ import type {
   ItineraryDay,
   ItineraryItem,
   ItineraryRoute,
+  PlaceSnapshot,
   PlannerCommand,
   PlaceResolution,
   TimeWindow,
@@ -275,7 +278,7 @@ async function fillMeal(
   const anchorPlaceId = command.constraints?.near_place_id ?? anchorItem?.place_id;
   const nearPlace = anchorPlaceId ? itinerary.places.find((place) => place.place_id === anchorPlaceId) : undefined;
 
-  const candidates = await context.placesAdapter.searchByText({
+  const candidates = await searchCandidatesWithFallback(context, {
     query: command.place_query ?? `${mealType} near ${nearPlace?.name ?? itinerary.title}`,
     includedType: "restaurant",
     minRating: command.constraints?.min_rating,
@@ -289,23 +292,13 @@ async function fillMeal(
     pageSize: 5,
   });
 
-  const candidate = candidates[0];
-  if (!candidate) {
-    throw new PlannerError("invalid_command", `No meal candidate found for ${mealType}.`);
-  }
-
-  const snapshot = await context.placesAdapter.getPlaceDetails({ placeId: candidate.placeId });
-  const place = placeFromSnapshot(snapshot);
-  upsertPlace(itinerary, place);
-
   const offset = day.items[0]?.start_at.match(/(Z|[+-]\d{2}:\d{2})$/)?.[1] ?? "Z";
   const startAt = combineLocalDateTime(day.date, pickMealStart(window, day), offset);
   const endAt = addMinutesToIso(startAt, 60);
-
-  day.items.push({
+  const mealItem: ItineraryItem = {
     id: createId("item"),
     kind: "meal",
-    title: `${capitalize(mealType)} at ${place.name}`,
+    title: `${capitalize(mealType)} stop`,
     start_at: startAt,
     end_at: endAt,
     duration_minutes: 60,
@@ -313,9 +306,21 @@ async function fillMeal(
     locked: false,
     source: "ai",
     category: mealType,
-    place_id: place.place_id,
     tags: ["auto_fill"],
     validation_conflict_ids: [],
+  };
+
+  const snapshot = await pickBestPlaceSnapshot(candidates, mealItem, context);
+  if (!snapshot) {
+    throw new PlannerError("invalid_command", `No meal candidate found for ${mealType}.`);
+  }
+  const place = placeFromSnapshot(snapshot);
+  upsertPlace(itinerary, place);
+
+  day.items.push({
+    ...mealItem,
+    title: `${capitalize(mealType)} at ${place.name}`,
+    place_id: place.place_id,
   });
 
   day.items.sort((left, right) => compareIso(left.start_at, right.start_at));
@@ -470,7 +475,7 @@ async function searchPlace(
     ? itinerary.places.find((candidate) => candidate.place_id === nearPlaceId)
     : undefined;
 
-  const candidates = await context.placesAdapter.searchByText({
+  const candidates = await searchCandidatesWithFallback(context, {
     query: command.place_query ?? item.title,
     includedType: inferSearchType(item, command),
     minRating: command.constraints?.min_rating,
@@ -484,12 +489,12 @@ async function searchPlace(
     pageSize: 5,
   });
 
-  const candidate = candidates[0];
-  if (!candidate) {
+  const snapshot = await pickBestPlaceSnapshot(candidates, item, context);
+  if (!snapshot) {
     throw new PlannerError("invalid_command", `No place candidate found for query: ${command.place_query ?? item.title}`);
   }
 
-  return context.placesAdapter.getPlaceDetails({ placeId: candidate.placeId });
+  return snapshot;
 }
 
 function matchesRoute(route: ItineraryRoute, command: PlannerCommand): boolean {
@@ -590,6 +595,71 @@ function inferSearchType(item: ItineraryItem, command: PlannerCommand): string |
   }
 
   return undefined;
+}
+
+async function pickBestPlaceSnapshot(
+  candidates: Array<{ placeId: string }>,
+  item: ItineraryItem,
+  context: CommandExecutionContext
+): Promise<PlaceSnapshot | null> {
+  if (!candidates.length) {
+    return null;
+  }
+
+  const snapshots = await Promise.all(
+    candidates.slice(0, 5).map((candidate) => context.placesAdapter.getPlaceDetails({ placeId: candidate.placeId }))
+  );
+
+  return snapshots.find((snapshot) => snapshotMatchesItemWindow(snapshot, item)) ?? snapshots[0] ?? null;
+}
+
+async function searchCandidatesWithFallback(
+  context: CommandExecutionContext,
+  request: {
+    query: string;
+    includedType?: string;
+    minRating?: number;
+    maxPriceLevel?: number;
+    locationBias?: {
+      center: { lat: number; lng: number };
+      radiusMeters: number;
+    };
+    pageSize?: number;
+  }
+) {
+  const candidates = await context.placesAdapter.searchByText(request);
+  if (candidates.length > 0) {
+    return candidates;
+  }
+
+  if (request.minRating !== undefined) {
+    const relaxed = await context.placesAdapter.searchByText({
+      ...request,
+      minRating: undefined,
+    });
+    if (relaxed.length > 0) {
+      return relaxed;
+    }
+  }
+
+  return candidates;
+}
+
+function snapshotMatchesItemWindow(snapshot: PlaceSnapshot, item: ItineraryItem): boolean {
+  const hours = snapshot.regularOpeningHours;
+  if (!hours?.length) {
+    return true;
+  }
+
+  const weekday = weekdayFromDate(extractLocalDate(item.start_at));
+  const window = hours.find((candidate) => candidate.weekday === weekday);
+  if (!window) {
+    return false;
+  }
+
+  const startTime = extractLocalTime(item.start_at);
+  const endTime = extractLocalTime(item.end_at);
+  return compareLocalTime(startTime, window.open) >= 0 && compareLocalTime(endTime, window.close) <= 0;
 }
 
 function buildItemTitle(item: ItineraryItem, placeName: string): string {

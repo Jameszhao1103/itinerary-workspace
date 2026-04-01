@@ -138,6 +138,7 @@ export class PlannerService {
       return this.dependencies.commandTranslator.translate({
         trip,
         utterance: input.utterance,
+        context: input.context,
       });
     }
 

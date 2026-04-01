@@ -4,6 +4,7 @@ import type {
   Itinerary,
   PlannerCommand,
   PlannerCommandAction,
+  PlannerCommandContext,
   PlannerCommandTranslator,
 } from "./types.ts";
 
@@ -34,42 +35,87 @@ const COMMANDS_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["action"],
+        required: [
+          "action",
+          "reason",
+          "day_date",
+          "item_id",
+          "target_item_id",
+          "place_query",
+          "place_id",
+          "new_start_at",
+          "new_end_at",
+          "mode",
+          "kind",
+          "constraints",
+          "payload",
+        ],
         properties: {
           action: {
             type: "string",
             enum: COMMAND_ACTIONS,
           },
-          reason: { type: "string" },
-          day_date: { type: "string" },
-          item_id: { type: "string" },
-          target_item_id: { type: "string" },
-          place_query: { type: "string" },
-          place_id: { type: "string" },
-          new_start_at: { type: "string" },
-          new_end_at: { type: "string" },
-          mode: {
-            type: "string",
-            enum: ["walk", "drive", "taxi", "transit", "flight"],
-          },
-          kind: {
-            type: "string",
-            enum: ["activity", "meal", "buffer", "free_time", "transit"],
-          },
+          reason: nullableStringSchema(),
+          day_date: nullableStringSchema(),
+          item_id: nullableStringSchema(),
+          target_item_id: nullableStringSchema(),
+          place_query: nullableStringSchema(),
+          place_id: nullableStringSchema(),
+          new_start_at: nullableStringSchema(),
+          new_end_at: nullableStringSchema(),
+          mode: nullableEnumSchema(["walk", "drive", "taxi", "transit", "flight"]),
+          kind: nullableEnumSchema(["activity", "meal", "buffer", "free_time", "transit"]),
           constraints: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              near_place_id: { type: "string" },
-              min_rating: { type: "number" },
-              max_price_level: { type: "number" },
-              respect_locks: { type: "boolean" },
-              max_walk_minutes: { type: "number" },
-            },
+            anyOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "near_place_id",
+                  "min_rating",
+                  "max_price_level",
+                  "respect_locks",
+                  "max_walk_minutes",
+                ],
+                properties: {
+                  near_place_id: nullableStringSchema(),
+                  min_rating: nullableNumberSchema(),
+                  max_price_level: nullableNumberSchema(),
+                  respect_locks: nullableBooleanSchema(),
+                  max_walk_minutes: nullableNumberSchema(),
+                },
+              },
+              { type: "null" },
+            ],
           },
           payload: {
-            type: "object",
-            additionalProperties: true,
+            anyOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "position",
+                  "meal_type",
+                  "conflict_id",
+                  "title",
+                  "start_at",
+                  "end_at",
+                  "start_time",
+                  "duration_minutes",
+                ],
+                properties: {
+                  position: nullableEnumSchema(["before", "after"]),
+                  meal_type: nullableEnumSchema(["breakfast", "lunch", "dinner"]),
+                  conflict_id: nullableStringSchema(),
+                  title: nullableStringSchema(),
+                  start_at: nullableStringSchema(),
+                  end_at: nullableStringSchema(),
+                  start_time: nullableStringSchema(),
+                  duration_minutes: nullableNumberSchema(),
+                },
+              },
+              { type: "null" },
+            ],
           },
         },
       },
@@ -82,9 +128,14 @@ const SYSTEM_PROMPT = [
   "Convert the user request into one or more planner commands.",
   "Only use item ids, place ids, and day dates that appear in the itinerary context.",
   "Prefer the smallest command set that preserves the user's intent.",
+  "When a command modifies an existing itinerary stop, always set item_id.",
+  "Treat workspace context selected_day and selected_item_id as strong grounding hints for phrases like current day, this stop, selected item, and this dinner.",
   "Use reorder_item for sequence changes. Set payload.position to before or after and target_item_id to the anchor item.",
   "Use move_item only for explicit time changes. Keep ISO timestamps with timezone offsets from the itinerary.",
   "Use replace_place when the user wants a different venue. place_query should be a short search query, not a sentence.",
+  "For replace_place, insert_item, and fill_meal, prefer place_query and leave place_id null unless the user is explicitly selecting a place already present in the current itinerary.",
+  "If the user references a weekday or relative day that does not exactly match the itinerary dates, prefer the itinerary item/day that best matches the named stop instead of inventing a new date.",
+  "For meal replacement, include local context in place_query such as the neighborhood or city when it is obvious from the current stop.",
   "Use lock_item and unlock_item for locking changes.",
   "Use fill_meal to add a meal, optimize_day/relax_day/compress_day for day-level changes, and set_transport_mode for route mode changes.",
   "Do not invent unsupported actions. Do not explain your reasoning. Respond with JSON only.",
@@ -110,7 +161,11 @@ export class OpenAiCommandTranslator implements PlannerCommandTranslator {
     this.fetchImpl = config.fetchImpl ?? fetch;
   }
 
-  async translate(input: { trip: Itinerary; utterance: string }): Promise<PlannerCommand[]> {
+  async translate(input: {
+    trip: Itinerary;
+    utterance: string;
+    context?: PlannerCommandContext;
+  }): Promise<PlannerCommand[]> {
     const utterance = input.utterance.trim();
     if (!utterance) {
       throw new PlannerError("invalid_command", "LLM translator requires a non-empty utterance.");
@@ -134,7 +189,7 @@ export class OpenAiCommandTranslator implements PlannerCommandTranslator {
             content: [
               {
                 type: "input_text",
-                text: buildUserPrompt(input.trip, utterance),
+                text: buildUserPrompt(input.trip, utterance, input.context),
               },
             ],
           },
@@ -164,11 +219,14 @@ export class OpenAiCommandTranslator implements PlannerCommandTranslator {
 
     const payload = await response.json();
     const parsed = extractStructuredPayload(payload);
-    return normalizePlannerCommands(parsed?.commands, input.trip, utterance);
+    return normalizePlannerCommands(parsed?.commands, input.trip, utterance, input.context);
   }
 }
 
-function buildUserPrompt(trip: Itinerary, utterance: string): string {
+function buildUserPrompt(trip: Itinerary, utterance: string, context?: PlannerCommandContext): string {
+  const selectedDay = trip.days.find((day) => day.date === context?.selected_day);
+  const selectedItem = selectedDay?.items.find((item) => item.id === context?.selected_item_id)
+    ?? trip.days.flatMap((day) => day.items).find((item) => item.id === context?.selected_item_id);
   return [
     `User request: ${utterance}`,
     "",
@@ -177,6 +235,12 @@ function buildUserPrompt(trip: Itinerary, utterance: string): string {
       {
         trip_id: trip.trip_id,
         timezone: trip.timezone,
+        workspace_context: {
+          selected_day: context?.selected_day ?? null,
+          selected_day_label: selectedDay?.label ?? null,
+          selected_item_id: context?.selected_item_id ?? null,
+          selected_item_title: selectedItem?.title ?? null,
+        },
         preferences: trip.preferences,
         days: trip.days.map((day) => ({
           date: day.date,
@@ -263,20 +327,22 @@ function parseJsonPayload(text: string): Record<string, unknown> {
 function normalizePlannerCommands(
   value: unknown,
   trip: Itinerary,
-  utterance: string
+  utterance: string,
+  context?: PlannerCommandContext
 ): PlannerCommand[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new PlannerError("invalid_command", "LLM planner did not produce any commands.");
   }
 
-  return value.map((rawCommand, index) => normalizeCommand(rawCommand, trip, utterance, index));
+  return value.map((rawCommand, index) => normalizeCommand(rawCommand, trip, utterance, index, context));
 }
 
 function normalizeCommand(
   rawCommand: unknown,
   trip: Itinerary,
   utterance: string,
-  index: number
+  index: number,
+  context?: PlannerCommandContext
 ): PlannerCommand {
   if (!rawCommand || typeof rawCommand !== "object") {
     throw new PlannerError("invalid_command", `Planner command ${index + 1} is not an object.`);
@@ -288,9 +354,18 @@ function normalizeCommand(
     throw new PlannerError("invalid_command", `Planner command ${index + 1} has an unsupported action.`);
   }
 
-  const itemId = asOptionalString(command.item_id);
+  const requestedDayDate = asOptionalString(command.day_date) ?? context?.selected_day;
+  const itemId =
+    asOptionalString(command.item_id) ??
+    inferItemIdFromUtterance(
+      trip,
+      utterance,
+      action as PlannerCommandAction,
+      requestedDayDate,
+      context?.selected_item_id
+    );
   const targetItemId = asOptionalString(command.target_item_id);
-  const dayDate = inferDayDate(trip, asOptionalString(command.day_date), itemId, targetItemId);
+  const dayDate = inferDayDate(trip, requestedDayDate, itemId, targetItemId, context?.selected_day);
   const normalized: PlannerCommand = {
     command_id: createId("cmd"),
     action: action as PlannerCommandAction,
@@ -308,6 +383,13 @@ function normalizeCommand(
     payload: normalizePayload(command.payload),
   };
 
+  if (
+    ["replace_place", "insert_item", "fill_meal"].includes(normalized.action) &&
+    normalized.place_query
+  ) {
+    normalized.place_id = undefined;
+  }
+
   validateNormalizedCommand(normalized, trip);
   return normalized;
 }
@@ -316,17 +398,25 @@ function inferDayDate(
   trip: Itinerary,
   rawDayDate: string | undefined,
   itemId?: string,
-  targetItemId?: string
+  targetItemId?: string,
+  preferredDayDate?: string
 ): string | undefined {
+  const inferredItemId = itemId ?? targetItemId;
   if (rawDayDate) {
     const day = trip.days.find((candidate) => candidate.date === rawDayDate);
-    if (!day) {
+    if (day) {
+      return rawDayDate;
+    }
+
+    if (!inferredItemId && preferredDayDate && trip.days.some((candidate) => candidate.date === preferredDayDate)) {
+      return preferredDayDate;
+    }
+
+    if (!inferredItemId) {
       throw new PlannerError("invalid_command", `Planner command references unknown day ${rawDayDate}.`);
     }
-    return rawDayDate;
   }
 
-  const inferredItemId = itemId ?? targetItemId;
   if (!inferredItemId) {
     return undefined;
   }
@@ -335,6 +425,10 @@ function inferDayDate(
     if (day.items.some((item) => item.id === inferredItemId)) {
       return day.date;
     }
+  }
+
+  if (preferredDayDate && trip.days.some((candidate) => candidate.date === preferredDayDate)) {
+    return preferredDayDate;
   }
 
   throw new PlannerError("invalid_command", `Planner command references unknown item ${inferredItemId}.`);
@@ -443,10 +537,128 @@ function asKind(value: unknown): PlannerCommand["kind"] | undefined {
     : undefined;
 }
 
+function inferItemIdFromUtterance(
+  trip: Itinerary,
+  utterance: string,
+  action: PlannerCommandAction,
+  dayDate?: string,
+  selectedItemId?: string
+): string | undefined {
+  if (!["lock_item", "unlock_item", "move_item", "replace_place", "delete_item"].includes(action)) {
+    return undefined;
+  }
+
+  const normalizedUtterance = normalizeText(utterance);
+  if (
+    selectedItemId &&
+    includesAny(normalizedUtterance, ["selected", "current", "this", "当前", "这个", "这家", "这里"])
+  ) {
+    return selectedItemId;
+  }
+
+  const candidateDays = dayDate
+    ? trip.days.filter((day) => day.date === dayDate)
+    : trip.days;
+  const scopedDays = candidateDays.length > 0 ? candidateDays : trip.days;
+  const candidates = scopedDays.flatMap((day) => day.items);
+  let bestScore = 0;
+  let bestItemId: string | undefined;
+
+  for (const item of candidates) {
+    const score = scoreItemReference(item, normalizedUtterance, selectedItemId);
+    if (score > bestScore) {
+      bestScore = score;
+      bestItemId = item.id;
+    }
+  }
+
+  return bestScore >= 18 ? bestItemId : undefined;
+}
+
+function scoreItemReference(
+  item: Itinerary["days"][number]["items"][number],
+  normalizedUtterance: string,
+  selectedItemId?: string
+): number {
+  let score = 0;
+  const normalizedTitle = normalizeText(item.title);
+  if (normalizedTitle && normalizedUtterance.includes(normalizedTitle)) {
+    score += 100;
+  }
+
+  const titleTokens = normalizedTitle
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4);
+  titleTokens.forEach((token) => {
+    if (normalizedUtterance.includes(token)) {
+      score += 12;
+    }
+  });
+
+  if (item.kind === "meal") {
+    if (item.category === "dinner" && includesAny(normalizedUtterance, ["dinner", "晚餐"])) score += 26;
+    if (item.category === "lunch" && includesAny(normalizedUtterance, ["lunch", "午餐", "午饭"])) score += 26;
+    if (item.category === "breakfast" && includesAny(normalizedUtterance, ["breakfast", "brunch", "早餐", "早午餐"])) score += 26;
+  }
+
+  if (item.kind === "activity" && includesAny(normalizedUtterance, ["activity", "景点", "活动"])) {
+    score += 6;
+  }
+
+  if (selectedItemId && item.id === selectedItemId) {
+    score += 10;
+  }
+
+  return score;
+}
+
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function includesAny(value: string, tokens: string[]): boolean {
+  return tokens.some((token) => value.includes(token));
+}
+
 async function safeReadText(response: Response): Promise<string> {
   try {
     return await response.text();
   } catch (_error) {
     return "";
   }
+}
+
+function nullableStringSchema() {
+  return {
+    anyOf: [{ type: "string" }, { type: "null" }],
+  };
+}
+
+function nullableNumberSchema() {
+  return {
+    anyOf: [{ type: "number" }, { type: "null" }],
+  };
+}
+
+function nullableBooleanSchema() {
+  return {
+    anyOf: [{ type: "boolean" }, { type: "null" }],
+  };
+}
+
+function nullableEnumSchema(values: string[]) {
+  return {
+    anyOf: [
+      {
+        type: "string",
+        enum: values,
+      },
+      { type: "null" },
+    ],
+  };
 }

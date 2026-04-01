@@ -89,3 +89,57 @@ test("planner service can reorder an item within the day", async () => {
     }
   }
 });
+
+test("planner service uses selected day context for current-day dinner replacement", async () => {
+  const previousProvider = process.env.PLANNER_PROVIDER;
+  process.env.PLANNER_PROVIDER = "mock";
+  const runtime = await createRuntime();
+  try {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+
+    const preview = await runtime.plannerService.previewCommand({
+      tripId: runtime.sampleTripId,
+      baseVersion: trip.version,
+      input: {
+        utterance: "把当前这天的晚餐换成评分高一点的美式餐厅",
+        context: {
+          selected_day: "2026-04-13",
+        },
+      },
+    });
+
+    const day1Dinner = preview.trip_preview.days[0].items.find((item) => item.id === "item_dinner");
+    const day2Dinner = preview.trip_preview.days[1].items.find((item) => item.id === "item_day2_dinner");
+
+    assert.ok(day1Dinner);
+    assert.ok(day2Dinner);
+    assert.equal(day1Dinner.place_id, "place_curate");
+    assert.notEqual(day2Dinner.place_id, "place_admiral");
+  } finally {
+    if (previousProvider === undefined) {
+      delete process.env.PLANNER_PROVIDER;
+    } else {
+      process.env.PLANNER_PROVIDER = previousProvider;
+    }
+  }
+});
+
+test("sample trip starts without warning conflicts", async () => {
+  const previousProvider = process.env.PLANNER_PROVIDER;
+  process.env.PLANNER_PROVIDER = "mock";
+  const runtime = await createRuntime();
+  try {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+
+    const warnings = trip.conflicts.filter((conflict) => conflict.severity !== "info");
+    assert.deepEqual(warnings, []);
+  } finally {
+    if (previousProvider === undefined) {
+      delete process.env.PLANNER_PROVIDER;
+    } else {
+      process.env.PLANNER_PROVIDER = previousProvider;
+    }
+  }
+});
