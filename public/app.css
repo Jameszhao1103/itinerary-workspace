@@ -382,6 +382,12 @@ body {
   min-height: 0;
 }
 
+.schedule {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
 .workspace-header {
   display: flex;
   justify-content: space-between;
@@ -455,6 +461,10 @@ body {
 
 .workspace-view {
   height: 100%;
+}
+
+.schedule .workspace-view {
+  overflow: hidden;
 }
 
 .plan-row {
@@ -767,6 +777,65 @@ body {
   padding: 14px;
   background: rgba(255, 255, 255, 0.66);
   border: 1px solid rgba(211, 200, 183, 0.7);
+}
+
+.focus-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.focus-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 6px;
+  border-radius: 16px 0 0 16px;
+  background: rgba(20, 90, 74, 0.28);
+}
+
+.focus-card.activity-block {
+  background: linear-gradient(180deg, rgba(45, 140, 84, 0.2), rgba(45, 140, 84, 0.1));
+  border-color: rgba(45, 140, 84, 0.28);
+}
+
+.focus-card.activity-block::before {
+  background: #2d8c54;
+}
+
+.focus-card.meal-block {
+  background: linear-gradient(180deg, rgba(210, 131, 37, 0.21), rgba(210, 131, 37, 0.1));
+  border-color: rgba(210, 131, 37, 0.28);
+}
+
+.focus-card.meal-block::before {
+  background: #d28325;
+}
+
+.focus-card.stay-block {
+  background: linear-gradient(180deg, rgba(139, 77, 179, 0.18), rgba(139, 77, 179, 0.1));
+  border-color: rgba(139, 77, 179, 0.26);
+}
+
+.focus-card.stay-block::before {
+  background: #8b4db3;
+}
+
+.focus-card.buffer-block {
+  background: linear-gradient(180deg, rgba(144, 153, 164, 0.2), rgba(144, 153, 164, 0.1));
+  border-color: rgba(144, 153, 164, 0.28);
+}
+
+.focus-card.buffer-block::before {
+  background: #9099a4;
+}
+
+.focus-card.travel-block {
+  background: linear-gradient(180deg, rgba(45, 108, 223, 0.18), rgba(45, 108, 223, 0.1));
+  border-color: rgba(45, 108, 223, 0.26);
+}
+
+.focus-card.travel-block::before {
+  background: #2d6cdf;
 }
 
 .focus-kicker,

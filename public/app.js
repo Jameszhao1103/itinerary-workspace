@@ -6,6 +6,7 @@ const state = {
   previewMeta: null,
   selectedDay: null,
   selectedItemId: null,
+  scheduleTab: "timeline",
   workspaceTab: "selection",
   pending: false,
   statusMessage: "Loading trip…",
@@ -51,6 +52,8 @@ const elements = {
   mapStatus: document.querySelector("#mapStatus"),
   planPanel: document.querySelector("#planPanel"),
   timelinePanel: document.querySelector("#timelinePanel"),
+  scheduleTabs: document.querySelectorAll("[data-schedule-tab]"),
+  scheduleViews: document.querySelectorAll("[data-schedule-view]"),
   workspaceTabs: document.querySelectorAll("[data-workspace-tab]"),
   workspaceViews: document.querySelectorAll("[data-workspace-view]"),
   workspaceNotice: document.querySelector("#workspaceNotice"),
@@ -176,6 +179,18 @@ elements.workspaceTabs.forEach((button) => {
 
     state.workspaceTab = tab;
     renderWorkspaceShell();
+  });
+});
+
+elements.scheduleTabs.forEach((button) => {
+  button.addEventListener("click", () => {
+    const tab = button.dataset.scheduleTab;
+    if (!tab) {
+      return;
+    }
+
+    state.scheduleTab = tab;
+    renderScheduleShell();
   });
 });
 
@@ -556,6 +571,7 @@ function render() {
 
   renderMeta(activeTrip);
   renderDayTabs(activeTrip);
+  renderScheduleShell();
   renderWorkspaceShell();
   renderWorkspaceNotice();
   renderMap(activeTrip, selectedDay, selectedItem);
@@ -604,6 +620,17 @@ function renderWorkspaceShell() {
 
   elements.workspaceViews.forEach((view) => {
     view.classList.toggle("hidden", view.dataset.workspaceView !== state.workspaceTab);
+  });
+}
+
+function renderScheduleShell() {
+  elements.scheduleTabs.forEach((button) => {
+    const isActive = button.dataset.scheduleTab === state.scheduleTab;
+    button.classList.toggle("active", isActive);
+  });
+
+  elements.scheduleViews.forEach((view) => {
+    view.classList.toggle("hidden", view.dataset.scheduleView !== state.scheduleTab);
   });
 }
 

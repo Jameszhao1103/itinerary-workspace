@@ -37,9 +37,22 @@
           </div>
         </article>
         <section class="right-rail">
-          <article class="panel timeline">
-            <h2>Timeline</h2>
-            <div id="timelinePanel"></div>
+          <article class="panel schedule">
+            <div class="workspace-header">
+              <h2>Schedule</h2>
+              <div class="workspace-tabs">
+                <button type="button" class="workspace-tab active" data-schedule-tab="timeline">Timeline</button>
+                <button type="button" class="workspace-tab" data-schedule-tab="plan">Plan</button>
+              </div>
+            </div>
+            <div class="workspace-body">
+              <section class="workspace-view" data-schedule-view="timeline">
+                <div id="timelinePanel"></div>
+              </section>
+              <section class="workspace-view hidden" data-schedule-view="plan">
+                <div id="planPanel"></div>
+              </section>
+            </div>
           </article>
 
           <article class="panel workspace">
@@ -47,7 +60,6 @@
               <h2>Workspace</h2>
               <div class="workspace-tabs">
                 <button type="button" class="workspace-tab active" data-workspace-tab="selection">Selection</button>
-                <button type="button" class="workspace-tab" data-workspace-tab="plan">Plan</button>
                 <button type="button" class="workspace-tab" data-workspace-tab="assistant">Assistant</button>
               </div>
             </div>
@@ -57,10 +69,6 @@
             <div class="workspace-body">
               <section class="workspace-view" data-workspace-view="selection">
                 <div class="focus-editor" id="focusEditor"></div>
-              </section>
-
-              <section class="workspace-view hidden" data-workspace-view="plan">
-                <div id="planPanel"></div>
               </section>
 
               <section class="workspace-view hidden assistant" data-workspace-view="assistant">
