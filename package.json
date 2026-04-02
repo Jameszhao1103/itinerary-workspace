@@ -1,6 +1,8 @@
 {
   "name": "planner-workspace",
+  "description": "AI-assisted itinerary editor with map, schedule, and assistant-driven planning.",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "node server/app/dev-server.mjs",

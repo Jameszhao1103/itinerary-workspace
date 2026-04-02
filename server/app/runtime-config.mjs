@@ -18,8 +18,6 @@ export function resolveMapsBrowserApiKey(env = resolveRuntimeEnv()) {
   return (
     env.GOOGLE_MAPS_BROWSER_API_KEY ??
     env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ??
-    env.GOOGLE_MAPS_API_KEY ??
-    env.GOOGLE_API_KEY ??
     null
   );
 }

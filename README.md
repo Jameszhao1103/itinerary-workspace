@@ -2,53 +2,59 @@
 
 Planner Workspace is an AI-assisted itinerary editor for travel planning.
 
-Instead of generating a trip plan once and freezing it, this project treats a trip as a shared editable workspace:
+Instead of generating a trip once and freezing it, this project treats a trip as a shared editable workspace. The same itinerary state drives every surface:
 
-- `Map` explains where you are going
-- `Timeline` explains when things happen
-- `Plan` explains the day in readable text
-- `Assistant` turns natural-language requests into itinerary mutations
+- `Map` explains where the day moves spatially
+- `Schedule` switches between `Timeline` and `Plan`
+- `Selection` gives direct item editing tools
+- `Assistant` turns natural language into itinerary mutations
 
-The core idea is that all views read from the same itinerary state. When a user edits the trip manually or asks the assistant to change it, the system recomputes routes, timing, conflicts, and view-specific derivations from that single source of truth.
+The product goal is simple: let AI generate and revise a realistic plan without taking control away from the user.
 
-## What This Project Does
+## Current MVP
 
-Current MVP capabilities:
+What works today:
 
-- Global day switcher that updates every panel together
+- Global day switcher
 - Interactive map with stop markers and route polylines
-- Horizontal timeline for the active day
-- Text plan view for the active day
+- Schedule panel with `Timeline / Plan` toggle
 - Selection panel for focused editing
-- Assistant preview/apply flow for itinerary mutations
-- Manual editing tools:
-  - lock / unlock an item
-  - reorder an item
-  - move an item in time
-  - replace a place
+- Assistant preview / apply / reject flow
+- Direct edits for small changes:
+  - lock / unlock
+  - move in time
+  - reorder
+  - timeline drag
+- Single-step undo for direct edits
+- Replace a place through search + preview
+- Add a place before / after the selected item through search + preview
 - Three-view synchronization:
-  - click an item in `Map`, `Timeline`, or `Plan`
-  - the same item is selected everywhere
+  - click `Map`, `Timeline`, or `Plan`
+  - the same item is focused everywhere
 - Route and opening-hours validation
 - Real provider support:
   - Google Places + Routes
   - OpenAI command translation
 
-## Product Shape
+## UI Shape
 
-The current UI is organized as:
+The current layout is:
 
 - Left: `Map`
-- Right top: `Timeline`
+- Right top: `Schedule`
 - Right bottom: `Workspace`
 
-The `Workspace` contains three tabs:
+`Schedule` contains:
 
-- `Selection`: focused item editor
-- `Plan`: readable text itinerary
-- `Assistant`: natural-language preview / apply workflow
+- `Timeline`
+- `Plan`
 
-This is intentionally closer to an editable planning tool than a chat-only travel assistant.
+`Workspace` contains:
+
+- `Selection`
+- `Assistant`
+
+This keeps the time-related views together while preserving a separate work area for editing and AI actions.
 
 ## How It Works
 
@@ -61,6 +67,7 @@ That state contains:
 - places
 - routes
 - conflicts
+- markdown / text sections
 - change log
 
 From there, the app derives:
@@ -68,24 +75,20 @@ From there, the app derives:
 - map markers and polylines
 - timeline blocks
 - plan rows
-- warnings and conflict badges
+- conflict badges
 - assistant diffs
-
-The planner engine is responsible for mutation and recomputation.
 
 Typical flow:
 
 1. User selects a day.
-2. User edits directly or types a request into the assistant.
+2. User edits directly or asks the assistant for a change.
 3. The planner resolves commands.
-4. The engine recomputes routes, time gaps, and conflicts.
-5. The UI re-renders `Map`, `Timeline`, `Plan`, and `Selection` from the same updated state.
+4. The engine recomputes routes, gaps, and conflicts.
+5. `Map`, `Schedule`, and `Selection` all re-render from the same updated itinerary.
 
 ## Runtime Modes
 
-This repo supports two provider layers.
-
-### 1. Mock mode
+### Mock mode
 
 Default local mode.
 
@@ -96,30 +99,26 @@ Uses:
 - mock Routes adapter
 - rule-based translator unless OpenAI is configured
 
-This is the fastest way to work on UI and planner logic.
+This is the fastest way to work on UI and planner behavior.
 
-### 2. Real API mode
+### Real API mode
 
-Uses live providers:
+Uses:
 
 - Google Places
 - Google Routes
 - OpenAI command planner
 
-This is useful for validating the actual search, routing, and natural-language mutation behavior.
+This is useful for validating live place search, routing, and natural-language mutation behavior.
 
 ## Quick Start
 
 ### Requirements
 
-- Node.js 20+ recommended
-- No database required for the current MVP
+- Node.js 20+
+- no database required for the current MVP
 
-### Install / run
-
-This repo intentionally keeps runtime dependencies minimal.
-
-Run locally:
+### Run locally
 
 ```bash
 npm run dev
@@ -131,38 +130,47 @@ Then open:
 http://localhost:3000
 ```
 
-### Local test suite
+### Run tests
 
 ```bash
 npm test
+node --check public/app.js
 ```
 
-## Environment Variables
+## Environment Setup
 
-The runtime reads workspace env from `.env.local` or shell env.
+The runtime reads environment values from shell env or `.env.local`.
 
-### Google
-
-Use real Google providers:
+An example file is included:
 
 ```bash
-GOOGLE_MAPS_API_KEY=...
-GOOGLE_MAPS_BROWSER_API_KEY=...
+cp .env.example .env.local
+```
+
+### Google configuration
+
+For real Google providers, use two different keys:
+
+```bash
+GOOGLE_MAPS_API_KEY=your_server_key
+GOOGLE_MAPS_BROWSER_API_KEY=your_browser_key
 PLANNER_PROVIDER=google
 ```
 
 Notes:
 
-- `GOOGLE_MAPS_BROWSER_API_KEY` is used by the browser map
-- `GOOGLE_MAPS_API_KEY` is used by server-side Places / Routes calls
-- if `PLANNER_PROVIDER` is omitted, the runtime can still infer `google` from the key
+- `GOOGLE_MAPS_API_KEY` is for server-side Places / Routes calls
+- `GOOGLE_MAPS_BROWSER_API_KEY` is for the browser map only
+- the browser key should be restricted by HTTP referrer
+- the server key should be restricted by API and server environment
+- the runtime no longer falls back from browser key to server key
 
-### OpenAI
+If you only set the server key, Google Places / Routes can still run, but the browser map will not load live Google tiles.
 
-Use the real LLM command planner:
+### OpenAI configuration
 
 ```bash
-OPENAI_API_KEY=...
+OPENAI_API_KEY=your_openai_key
 OPENAI_MODEL=gpt-4.1-mini
 PLANNER_COMMAND_TRANSLATOR=openai
 ```
@@ -180,12 +188,6 @@ Smoke test Google adapters:
 npm run test:google
 ```
 
-This verifies:
-
-- Google Places text search
-- Google Routes route computation
-- route distance / duration / polyline availability
-
 Then run the app:
 
 ```bash
@@ -196,12 +198,10 @@ Useful live checks:
 
 - provider pill shows `google`
 - assistant provider shows `openai` when configured
-- map loads live Google tiles
+- map loads live Google tiles when `GOOGLE_MAPS_BROWSER_API_KEY` is set
 - assistant requests produce preview diffs against real providers
 
 ## Example Assistant Requests
-
-The current planner can handle flows like:
 
 - `把当前这天的晚餐换成评分高一点的美式餐厅`
 - `锁定第一天的 River Arts District walk`
@@ -211,6 +211,26 @@ The current planner can handle flows like:
 
 The important detail is that assistant requests are translated into structured planner commands before execution.
 
+## API Shape
+
+Main local API routes:
+
+- `GET /api/trips/:tripId`
+- `GET /api/places/search`
+- `POST /api/trips/:tripId/commands/preview`
+- `POST /api/trips/:tripId/commands/execute`
+- `POST /api/trips/:tripId/commands/apply`
+- `POST /api/trips/:tripId/commands/reject`
+- `POST /api/debug/reset`
+- `GET /api/debug/runtime`
+
+There are two mutation paths:
+
+1. `preview -> apply / reject`
+   Use for AI changes and larger edits such as replace / insert.
+2. `execute`
+   Use for direct user edits such as lock, move, reorder, and undo.
+
 ## Repository Structure
 
 ### Frontend
@@ -218,8 +238,6 @@ The important detail is that assistant requests are translated into structured p
 - `public/index.html`
 - `public/app.js`
 - `public/app.css`
-
-This is the current interactive workspace UI.
 
 ### App server
 
@@ -229,8 +247,6 @@ This is the current interactive workspace UI.
 - `server/app/create-runtime.mjs`
 - `server/app/runtime-config.mjs`
 
-This layer serves the UI and API endpoints.
-
 ### Planner engine
 
 - `server/planner/planner-service.ts`
@@ -239,79 +255,49 @@ This layer serves the UI and API endpoints.
 - `server/planner/diff.ts`
 - `server/planner/types.ts`
 
-This layer owns:
-
-- preview / apply / reject
-- command execution
-- route and timing recomputation
-- conflicts
-- view derivations
-
 ### Translators
 
 - `server/planner/openai-command-translator.ts`
 - `server/planner/rule-based-command-translator.ts`
 - `server/planner/fallback-command-translator.ts`
 
-This layer maps user utterances into structured planner commands.
-
 ### Providers
 
 - `server/integrations/google/`
 - `server/integrations/mock/`
 
-This layer abstracts Places and Routes providers.
-
 ### Demo data
 
 - `server/demo/sample-trip.ts`
-
-This provides the seeded Asheville trip used for local testing.
 
 ### Tests
 
 - `tests/`
 
-This covers:
+Current automated coverage includes:
 
 - app routing
-- planner preview/apply flows
+- planner preview / apply / execute flows
+- undo generation
+- insert-before / insert-after behavior
 - translator normalization
 - sample trip baseline validity
-
-## API Shape
-
-The main local API flows are:
-
-- `GET /api/trips/:tripId`
-- `POST /api/trips/:tripId/commands/preview`
-- `POST /api/trips/:tripId/commands/apply`
-- `POST /api/trips/:tripId/commands/reject`
-- `GET /api/places/search`
-- `POST /api/debug/reset`
-- `GET /api/debug/runtime`
-
-The most important mutation flow is preview/apply:
-
-1. user issues a command
-2. system returns a preview itinerary and diff
-3. user applies or rejects the preview
 
 ## Current Limitations
 
 This repo is still an MVP / prototype.
 
-Important current limitations:
+Known gaps:
 
 - persistence is in-memory, not database-backed
-- there is no auth or multi-user model
-- UI is not yet optimized for production polish
+- no auth or multi-user model
 - planner optimization is heuristic, not a full solver
 - Google and OpenAI usage still needs cost controls and stronger observability
+- UI is functional but not yet production-polished
 
 ## Design Docs
 
-Additional design and architecture documents:
+Additional docs:
 
 - `docs/itinerary-workspace.md`
 - `docs/planner-commands.md`
@@ -327,17 +313,6 @@ Schemas and examples:
 - `schemas/planner-command.schema.json`
 - `examples/sample-itinerary.json`
 
-## Why This Repo Exists
+## License
 
-The project is built around a simple product thesis:
-
-AI should not replace the user's control over a trip plan.
-
-Instead, AI should:
-
-- generate a usable draft
-- understand structured travel constraints
-- help mutate the itinerary safely
-- keep map, time, and text views consistent
-
-That is the role of Planner Workspace.
+This project is released under the MIT License. See [LICENSE](./LICENSE).
