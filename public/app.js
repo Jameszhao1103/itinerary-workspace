@@ -31,7 +31,7 @@ const timelineDrag = {
 
 const TIMELINE_START_HOUR = 8;
 const TIMELINE_TOTAL_MINUTES = 14 * 60;
-const TIMELINE_MIN_WIDTH_PERCENT = 6.8;
+const TIMELINE_MIN_WIDTH_PERCENT = 5.4;
 const TIMELINE_CARD_HEIGHT = 68;
 const TIMELINE_ROW_HEIGHT = 78;
 const TIMELINE_ROW_GAP = 10;
@@ -46,9 +46,6 @@ const elements = {
   tripSubtitle: document.querySelector("#tripSubtitle"),
   metaPills: document.querySelector("#metaPills"),
   dayTabs: document.querySelector("#dayTabs"),
-  mapDayLabel: document.querySelector("#mapDayLabel"),
-  timelineDayLabel: document.querySelector("#timelineDayLabel"),
-  workspaceDayLabel: document.querySelector("#workspaceDayLabel"),
   mapCanvas: document.querySelector("#mapCanvas"),
   mapStatus: document.querySelector("#mapStatus"),
   planPanel: document.querySelector("#planPanel"),
@@ -369,15 +366,11 @@ function render() {
   state.selectedDay = selectedDay?.date ?? null;
   state.selectedItemId = inferDefaultSelectedItemId(activeTrip, state.selectedDay, state.selectedItemId);
   const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
-  const selectedLabel = selectedDay?.label ?? "Day";
 
   elements.tripTitle.textContent = activeTrip.title;
   elements.tripSubtitle.textContent = state.preview
     ? "Preview mode: all panels are rendering from the draft itinerary."
     : "Shared state across map, timeline, and the workspace.";
-  elements.mapDayLabel.textContent = selectedLabel;
-  elements.timelineDayLabel.textContent = selectedLabel;
-  elements.workspaceDayLabel.textContent = selectedLabel;
 
   renderMeta(activeTrip);
   renderDayTabs(activeTrip);
@@ -518,18 +511,17 @@ function renderTimeline(trip, day, selectedItem) {
   const hourMarks = Array.from({ length: 15 }, (_, index) => `<span>${String(index + 8).padStart(2, "0")}</span>`).join("");
   const layout = buildTimelineLayout(model.events);
   const eventPills = layout.events
-    .map(({ block, left, width, top, compact }) => {
+    .map(({ block, left, width, top, density }) => {
       const warning = block.warningCount
         ? `<span class="event-alert" title="${block.warningCount} conflict(s)">${block.warningCount}</span>`
         : "";
       return `
         <div
-          class="event-pill ${flowBlockClass(block)}${compact ? " compact" : ""}${block.itemId === selectedItem?.id ? " selected" : ""}${block.locked ? " locked" : ""}"
+          class="event-pill ${flowBlockClass(block)} density-${density}${block.itemId === selectedItem?.id ? " selected" : ""}${block.locked ? " locked" : ""}"
           data-item-id="${block.itemId}"
           style="left:${left}%;width:${width}%;top:${top}px;">
           ${warning}
-          <strong>${escapeHtml(timelineBlockTitle(block))}</strong>
-          <small>${timelineBlockTime(block, compact)}</small>
+          <strong>${escapeHtml(timelineBlockTitle(block, density))}</strong>
         </div>
       `;
     })
@@ -1478,13 +1470,11 @@ function buildTimelineLayout(items) {
     .slice()
     .sort((left, right) => new Date(left.start_at).getTime() - new Date(right.start_at).getTime())
     .map((block) => {
-      const displayTitle = timelineBlockTitle(block);
+      const density = timelineDensity(block);
+      const displayTitle = timelineBlockTitle(block, density);
       const startPercent = clampPercent((minutesFromDayStart(block.start_at) / TIMELINE_TOTAL_MINUTES) * 100);
       const actualWidth = Math.max(4, (durationMinutes(block.start_at, block.end_at) / TIMELINE_TOTAL_MINUTES) * 100);
-      const minimumWidth = Math.min(
-        16,
-        Math.max(TIMELINE_MIN_WIDTH_PERCENT, 5.4 + displayTitle.length * 0.14)
-      );
+      const minimumWidth = timelineMinimumWidth(displayTitle, density);
       const width = Math.max(actualWidth, minimumWidth);
       const left = Math.max(0, Math.min(100 - width, startPercent));
 
@@ -1500,7 +1490,7 @@ function buildTimelineLayout(items) {
         block,
         left,
         width,
-        compact: actualWidth < TIMELINE_MIN_WIDTH_PERCENT,
+        density,
         top: TIMELINE_TOP_PADDING + rowIndex * (TIMELINE_ROW_HEIGHT + TIMELINE_ROW_GAP),
       };
     });
@@ -1630,20 +1620,9 @@ function flowBlockClass(block) {
   return block.className;
 }
 
-function timelineBlockTitle(block) {
-  if (block.timelineTitle) {
-    return block.timelineTitle;
-  }
-
-  return block.title;
-}
-
-function timelineBlockTime(block, compact) {
-  if (compact) {
-    return localTime(block.start_at);
-  }
-
-  return `${localTime(block.start_at)}-${localTime(block.end_at)}`;
+function timelineBlockTitle(block, density = "spacious") {
+  const baseTitle = block.timelineTitle || block.title;
+  return adaptTimelineTitle(baseTitle, density);
 }
 
 function transportLabel(mode) {
@@ -1668,31 +1647,35 @@ function itemTypeLabel(item) {
 
 function buildTimelineItemTitle(item, place) {
   if (item.kind === "meal") {
-    return capitalize(item.category ?? "meal");
+    return standardMealTimelineLabel(item.category);
   }
 
   if (item.kind === "check_in") {
-    return "Check-in";
+    return "Hotel";
   }
 
   if (item.kind === "check_out") {
-    return "Check-out";
+    return "Checkout";
   }
 
   if (item.kind === "buffer") {
-    return normalizeText(item.title).includes("hotel") ? "Hotel reset" : "Buffer";
+    return normalizeText(item.title).includes("hotel") ? "Reset" : "Buffer";
   }
 
   if (item.kind === "flight") {
     const airportCode = extractAirportCode(item.title) ?? extractAirportCode(place?.name);
-    return airportCode ? `Arrive ${airportCode}` : "Arrival";
+    return airportCode ?? "Flight";
+  }
+
+  if (item.kind === "transit") {
+    return transportLabel(item.category === "drive" ? "drive" : "transit");
   }
 
   if (item.kind === "activity") {
-    return shortenTimelineLabel(place?.name ?? item.title);
+    return standardActivityTimelineLabel(item, place);
   }
 
-  return shortenTimelineLabel(place?.name ?? item.title);
+  return standardFallbackTimelineLabel(item, place);
 }
 
 function countRouteWarnings(trip, fromItemId, toItemId) {
@@ -1786,6 +1769,123 @@ function shortenTimelineLabel(value) {
     .trim();
   const words = cleaned.split(" ").filter(Boolean);
   return words.length <= 2 ? cleaned || value : words.slice(0, 2).join(" ");
+}
+
+function canonicalTimelineLabel(value) {
+  const normalized = normalizeText(value);
+  if (normalized.includes("river arts")) return "River Arts";
+  if (normalized.includes("battery park") || normalized.includes("book exchange") || normalized.includes("bookshop")) {
+    return "Bookshop";
+  }
+  if (normalized.includes("biltmore")) return "Biltmore";
+  if (normalized.includes("carrier park") || normalized.includes("park walk")) return "Park";
+  if (normalized.includes("white duck")) return "White Duck";
+  if (normalized.includes("stable cafe")) return "Stable Cafe";
+  if (normalized.includes("foundry")) return "Foundry";
+  return shortenTimelineLabel(value);
+}
+
+function standardMealTimelineLabel(category) {
+  if (category === "breakfast") return "Breakfast";
+  if (category === "brunch") return "Brunch";
+  if (category === "dinner") return "Dine";
+  return "Lunch";
+}
+
+function standardActivityTimelineLabel(item, place) {
+  const normalized = normalizeText(place?.name ?? item.title);
+  if (normalized.includes("river arts")) return "Arts";
+  if (normalized.includes("battery park") || normalized.includes("book exchange") || normalized.includes("bookshop")) {
+    return "Books";
+  }
+  if (normalized.includes("biltmore")) return "Bilt";
+  if (normalized.includes("carrier park") || normalized.includes("park walk")) return "Park";
+  if (normalized.includes("museum")) return "Muse";
+  if (item.category === "shopping") return "Shop";
+  if (item.category === "park") return "Park";
+  if (item.category === "landmark") return "Stop";
+  if (item.category === "sightseeing") return "Walk";
+  return "Stop";
+}
+
+function standardFallbackTimelineLabel(item, place) {
+  const normalized = normalizeText(place?.name ?? item.title);
+  if (normalized.includes("foundry")) return "Hotel";
+  if (normalized.includes("airport") || normalized.includes("avl")) return "AVL";
+  if (normalized.includes("stable cafe")) return "Lunch";
+  if (normalized.includes("white duck")) return "Lunch";
+  if (normalized.includes("buffer")) return "Gap";
+  return capitalize(item.kind.replace(/_/g, " "));
+}
+
+function adaptTimelineTitle(title, density) {
+  if (density === "micro") {
+    return microTimelineLabel(title);
+  }
+
+  if (density === "tight") {
+    return compactTimelineLabel(title, 1);
+  }
+
+  if (density === "compact") {
+    return compactTimelineLabel(title, 2);
+  }
+
+  return title;
+}
+
+function compactTimelineLabel(title, wordLimit) {
+  const words = String(title).split(/\s+/u).filter(Boolean);
+  if (words.length <= wordLimit) {
+    return title;
+  }
+
+  return words.slice(0, wordLimit).join(" ");
+}
+
+function microTimelineLabel(title) {
+  const normalized = normalizeText(title);
+  if (normalized.includes("avl")) return "AVL";
+  if (normalized.includes("hotel")) return "Hotel";
+  if (normalized.includes("check")) return "Check";
+  if (normalized.includes("dine") || normalized.includes("dinner")) return "Dine";
+  if (normalized.includes("lunch")) return "Lunch";
+  if (normalized.includes("brunch")) return "Brunch";
+  if (normalized.includes("breakfast")) return "Breakfast";
+  if (normalized.includes("biltmore")) return "Bilt";
+  if (normalized.includes("reset")) return "Reset";
+  if (normalized.includes("books")) return "Books";
+  if (normalized.includes("arts")) return "Arts";
+  if (normalized.includes("park")) return "Park";
+  if (normalized.includes("buffer")) return "Buffer";
+  if (normalized.includes("drive")) return "Drive";
+  if (normalized.includes("transit")) return "Transit";
+
+  return compactTimelineLabel(title, 1);
+}
+
+function timelineDensity(block) {
+  const actualWidth = Math.max(4, (durationMinutes(block.start_at, block.end_at) / TIMELINE_TOTAL_MINUTES) * 100);
+  if (actualWidth < 5.6) return "micro";
+  if (actualWidth < 8.4) return "tight";
+  if (actualWidth < 11.4) return "compact";
+  return "spacious";
+}
+
+function timelineMinimumWidth(displayTitle, density) {
+  if (density === "micro") {
+    return Math.max(6.8, 4.8 + displayTitle.length * 0.42);
+  }
+
+  if (density === "tight") {
+    return Math.min(9.8, Math.max(7.8, 4.9 + displayTitle.length * 0.55));
+  }
+
+  if (density === "compact") {
+    return Math.min(11.4, Math.max(8.6, 5.4 + displayTitle.length * 0.48));
+  }
+
+  return Math.min(14.8, Math.max(9.2, 5.8 + displayTitle.length * 0.38));
 }
 
 function extractAirportCode(value) {

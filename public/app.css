@@ -507,9 +507,11 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
+  align-items: flex-start;
   box-shadow: 0 10px 20px rgba(52, 46, 34, 0.08);
   overflow: hidden;
   z-index: 2;
+  text-align: left;
 }
 
 .event-pill.selected {
@@ -536,20 +538,70 @@ body {
 .event-pill strong {
   font-size: 13px;
   line-height: 1.08;
-  margin-bottom: 6px;
-}
-
-.event-pill.compact strong {
-  font-size: 12px;
+  margin-bottom: 0;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .event-pill small {
-  font-size: 11px;
-  line-height: 1.1;
+  display: none;
 }
 
-.event-pill.compact small {
+.event-pill.density-compact {
+  padding: 6px 8px 5px;
+}
+
+.event-pill.density-compact strong {
+  font-size: 11px;
+  margin-bottom: 0;
+}
+
+.event-pill.density-compact small {
+  font-size: 9px;
+}
+
+.event-pill.density-tight {
+  padding: 5px 6px;
+  justify-content: center;
+}
+
+.event-pill.density-tight strong {
   font-size: 10px;
+  margin: 0;
+}
+
+.event-pill.density-tight small {
+  display: none;
+}
+
+.event-pill.density-micro {
+  padding: 4px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.event-pill.density-micro strong {
+  font-size: 9px;
+  line-height: 1;
+  margin: 0;
+}
+
+.event-pill.density-micro small {
+  display: none;
+}
+
+.event-pill.density-micro .event-alert,
+.event-pill.density-tight .event-alert {
+  top: 5px;
+  right: 5px;
+  min-width: 15px;
+  height: 15px;
+  font-size: 10px;
+  padding: 0 4px;
 }
 
 .event-alert {
