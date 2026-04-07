@@ -23,9 +23,16 @@ export async function handleAppRequest(runtime, request) {
           assistant: {
             provider: runtime.assistantProvider ?? "rules",
           },
+          storage: {
+            mode: runtime.storageMode ?? "memory",
+          },
           maps: {
             browser_api_key: runtime.mapsBrowserApiKey ?? null,
             browser_api_key_present: Boolean(runtime.mapsBrowserApiKey),
+          },
+          exports: {
+            calendar_ics_url: `/api/trips/${trip.trip_id}/export/ics`,
+            print_url: `/trips/${trip.trip_id}/print`,
           },
         },
       },
@@ -92,6 +99,25 @@ export async function handleAppRequest(runtime, request) {
     });
   }
 
+  if (request.method === "POST" && pathname.match(/^\/api\/trips\/[^/]+\/rename$/)) {
+    const tripId = pathname.split("/")[3];
+    const result = await runtime.plannerService.renameTrip({
+      tripId,
+      baseVersion: request.body.base_version,
+      title: request.body.title,
+    });
+
+    return json(200, {
+      ok: true,
+      data: result,
+      meta: {
+        request_id: randomUUID(),
+        trip_id: tripId,
+        version: result.trip.version,
+      },
+    });
+  }
+
   if (request.method === "POST" && pathname.match(/^\/api\/trips\/[^/]+\/commands\/apply$/)) {
     const tripId = pathname.split("/")[3];
     const result = await runtime.plannerService.applyPreview({
@@ -145,12 +171,22 @@ export async function handleAppRequest(runtime, request) {
   if (request.method === "GET" && pathname === "/api/debug/runtime") {
     return json(200, {
       ok: true,
-      data: {
+      data: runtime.snapshot ? runtime.snapshot() : {
         provider: runtime.provider,
         assistant_provider: runtime.assistantProvider ?? "rules",
         sample_trip_id: runtime.sampleTripId,
         maps_browser_key_present: Boolean(runtime.mapsBrowserApiKey),
       },
+      meta: {
+        request_id: randomUUID(),
+      },
+    });
+  }
+
+  if (request.method === "GET" && pathname === "/api/debug/metrics") {
+    return json(200, {
+      ok: true,
+      data: runtime.metrics?.snapshot ? runtime.metrics.snapshot() : {},
       meta: {
         request_id: randomUUID(),
       },

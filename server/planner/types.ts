@@ -227,6 +227,12 @@ export type PlannerExecuteRequest = {
   input: PlannerCommandInput;
 };
 
+export type PlannerRenameTripRequest = {
+  tripId: string;
+  baseVersion: number;
+  title: string;
+};
+
 export type PlannerRejectPreviewRequest = {
   tripId: string;
   previewId: string;
@@ -281,6 +287,11 @@ export type PlannerExecuteResponse = {
   changed_item_ids: string[];
   summary: string;
   undo_commands: PlannerCommand[];
+};
+
+export type PlannerRenameTripResponse = {
+  trip: Itinerary;
+  summary: string;
 };
 
 export interface PlannerCommandTranslator {

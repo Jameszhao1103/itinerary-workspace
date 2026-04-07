@@ -5,7 +5,9 @@ import { handleAppRequest, toErrorResponse } from "../server/app/app-router.mjs"
 
 async function withMockRuntime(run) {
   const previousProvider = process.env.PLANNER_PROVIDER;
+  const previousStorageMode = process.env.PLANNER_STORAGE_MODE;
   process.env.PLANNER_PROVIDER = "mock";
+  process.env.PLANNER_STORAGE_MODE = "memory";
   const runtime = await createRuntime();
   try {
     await run(runtime);
@@ -14,6 +16,12 @@ async function withMockRuntime(run) {
       delete process.env.PLANNER_PROVIDER;
     } else {
       process.env.PLANNER_PROVIDER = previousProvider;
+    }
+
+    if (previousStorageMode === undefined) {
+      delete process.env.PLANNER_STORAGE_MODE;
+    } else {
+      process.env.PLANNER_STORAGE_MODE = previousStorageMode;
     }
   }
 }
@@ -104,5 +112,45 @@ test("execute endpoint rejects utterance input", async () => {
       assert.equal(response.payload.ok, false);
       assert.match(response.payload.error.message, /structured commands/i);
     }
+  });
+});
+
+test("metrics endpoint exposes request counters", async () => {
+  await withMockRuntime(async (runtime) => {
+    const tripId = runtime.sampleTripId;
+
+    await handleAppRequest(runtime, {
+      method: "GET",
+      url: `/api/trips/${tripId}`,
+    });
+
+    const metricsResponse = await handleAppRequest(runtime, {
+      method: "GET",
+      url: "/api/debug/metrics",
+    });
+
+    assert.equal(metricsResponse.status, 200);
+    assert.equal(metricsResponse.payload.ok, true);
+    assert.equal(typeof metricsResponse.payload.data.requests?.total, "number");
+  });
+});
+
+test("rename endpoint updates the trip title", async () => {
+  await withMockRuntime(async (runtime) => {
+    const tripId = runtime.sampleTripId;
+
+    const renameResponse = await handleAppRequest(runtime, {
+      method: "POST",
+      url: `/api/trips/${tripId}/rename`,
+      body: {
+        base_version: 1,
+        title: "Blue Ridge Escape",
+      },
+    });
+
+    assert.equal(renameResponse.status, 200);
+    assert.equal(renameResponse.payload.ok, true);
+    assert.equal(renameResponse.payload.data.trip.title, "Blue Ridge Escape");
+    assert.equal(renameResponse.payload.data.trip.version, 2);
   });
 });

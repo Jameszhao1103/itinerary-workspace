@@ -1,10 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRuntime } from "../server/app/create-runtime.mjs";
+import { recomputeDerivedState } from "../server/planner/index.ts";
 
 async function withMockRuntime(run) {
   const previousProvider = process.env.PLANNER_PROVIDER;
+  const previousStorageMode = process.env.PLANNER_STORAGE_MODE;
   process.env.PLANNER_PROVIDER = "mock";
+  process.env.PLANNER_STORAGE_MODE = "memory";
   const runtime = await createRuntime();
   try {
     await run(runtime);
@@ -13,6 +16,12 @@ async function withMockRuntime(run) {
       delete process.env.PLANNER_PROVIDER;
     } else {
       process.env.PLANNER_PROVIDER = previousProvider;
+    }
+
+    if (previousStorageMode === undefined) {
+      delete process.env.PLANNER_STORAGE_MODE;
+    } else {
+      process.env.PLANNER_STORAGE_MODE = previousStorageMode;
     }
   }
 }
@@ -403,5 +412,95 @@ test("insert_item throws when a locked item would need to move", async () => {
         }),
       /locked/i
     );
+  });
+});
+
+test("resolve_conflict can repair an overlap conflict", async () => {
+  await withMockRuntime(async (runtime) => {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+
+    const day = trip.days.find((candidate) => candidate.date === "2026-04-12");
+    const lunch = day?.items.find((item) => item.id === "item_lunch");
+    const walk = day?.items.find((item) => item.id === "item_walk_river_arts");
+    assert.ok(lunch);
+    assert.ok(walk);
+
+    walk.start_at = "2026-04-12T13:00:00-04:00";
+    walk.end_at = "2026-04-12T15:00:00-04:00";
+    await recomputeDerivedState(trip, {
+      placesAdapter: runtime.placesAdapter,
+      routesAdapter: runtime.routesAdapter,
+      now: new Date("2026-03-30T21:00:00-04:00"),
+    });
+    await runtime.tripRepository.saveTrip(trip);
+
+    const conflict = trip.conflicts.find((candidate) => candidate.type === "overlap_conflict");
+    assert.ok(conflict);
+
+    const preview = await runtime.plannerService.previewCommand({
+      tripId: runtime.sampleTripId,
+      baseVersion: trip.version,
+      input: {
+        commands: [
+          {
+            command_id: "cmd_resolve_overlap",
+            action: "resolve_conflict",
+            day_date: "2026-04-12",
+            item_id: walk.id,
+            reason: "Repair overlap",
+            payload: {
+              conflict_id: conflict.id,
+            },
+          },
+        ],
+      },
+    });
+
+    const repairedWalk = preview.trip_preview.days[0].items.find((item) => item.id === walk.id);
+    assert.equal(repairedWalk?.start_at, "2026-04-12T13:30:00-04:00");
+  });
+});
+
+test("resolve_conflict can fill a missing meal window", async () => {
+  await withMockRuntime(async (runtime) => {
+    const trip = await runtime.tripRepository.getTripById(runtime.sampleTripId);
+    assert.ok(trip);
+
+    const day = trip.days.find((candidate) => candidate.date === "2026-04-13");
+    assert.ok(day);
+    day.items = day.items.filter((item) => item.id !== "item_day2_lunch");
+    await recomputeDerivedState(trip, {
+      placesAdapter: runtime.placesAdapter,
+      routesAdapter: runtime.routesAdapter,
+      now: new Date("2026-03-30T21:00:00-04:00"),
+    });
+    await runtime.tripRepository.saveTrip(trip);
+
+    const conflict = trip.conflicts.find((candidate) => candidate.id === "meal_lunch_2026-04-13");
+    assert.ok(conflict);
+
+    const preview = await runtime.plannerService.previewCommand({
+      tripId: runtime.sampleTripId,
+      baseVersion: trip.version,
+      input: {
+        commands: [
+          {
+            command_id: "cmd_resolve_meal",
+            action: "resolve_conflict",
+            day_date: "2026-04-13",
+            reason: "Repair missing lunch",
+            payload: {
+              conflict_id: conflict.id,
+            },
+          },
+        ],
+      },
+    });
+
+    const lunchItems = preview.trip_preview.days[1].items.filter(
+      (item) => item.kind === "meal" && item.category === "lunch"
+    );
+    assert.equal(lunchItems.length >= 1, true);
   });
 });

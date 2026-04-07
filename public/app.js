@@ -13,9 +13,11 @@ const state = {
   statusTone: "neutral",
   provider: "mock",
   assistantProvider: "rules",
+  storageMode: "memory",
   mapsBrowserApiKey: null,
   placeSearchSession: null,
   undoAction: null,
+  titleEditing: false,
 };
 
 const mapRuntime = {
@@ -30,6 +32,8 @@ const mapRuntime = {
 const timelineDrag = {
   active: null,
 };
+
+const initialRouteState = readUrlState();
 
 const TIMELINE_START_HOUR = 8;
 const TIMELINE_TOTAL_MINUTES = 14 * 60;
@@ -46,6 +50,10 @@ const TIMELINE_BOTTOM_PADDING = 10;
 const elements = {
   tripTitle: document.querySelector("#tripTitle"),
   tripSubtitle: document.querySelector("#tripSubtitle"),
+  tripTitleForm: document.querySelector("#tripTitleForm"),
+  tripTitleInput: document.querySelector("#tripTitleInput"),
+  editTripTitleButton: document.querySelector("#editTripTitleButton"),
+  cancelTripTitleButton: document.querySelector("#cancelTripTitleButton"),
   metaPills: document.querySelector("#metaPills"),
   dayTabs: document.querySelector("#dayTabs"),
   mapCanvas: document.querySelector("#mapCanvas"),
@@ -54,6 +62,8 @@ const elements = {
   timelinePanel: document.querySelector("#timelinePanel"),
   scheduleTabs: document.querySelectorAll("[data-schedule-tab]"),
   scheduleViews: document.querySelectorAll("[data-schedule-view]"),
+  exportCalendarButton: document.querySelector("#exportCalendarButton"),
+  exportPdfButton: document.querySelector("#exportPdfButton"),
   workspaceTabs: document.querySelectorAll("[data-workspace-tab]"),
   workspaceViews: document.querySelectorAll("[data-workspace-view]"),
   workspaceNotice: document.querySelector("#workspaceNotice"),
@@ -68,9 +78,62 @@ const elements = {
   quickActions: document.querySelectorAll("[data-quick-action]"),
 };
 
+state.selectedDay = initialRouteState.selectedDay;
+state.selectedItemId = initialRouteState.selectedItemId;
+state.scheduleTab = initialRouteState.scheduleTab;
+state.workspaceTab = initialRouteState.workspaceTab;
+
 bootstrap().catch((error) => {
   console.error(error);
   setPending(false, error.message, "error");
+});
+
+elements.editTripTitleButton.addEventListener("click", () => {
+  if (!state.trip) {
+    return;
+  }
+
+  state.titleEditing = true;
+  renderTitleEditor();
+  elements.tripTitleInput.focus();
+  elements.tripTitleInput.select();
+});
+
+elements.cancelTripTitleButton.addEventListener("click", () => {
+  state.titleEditing = false;
+  renderTitleEditor();
+});
+
+elements.tripTitleForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.trip) {
+    return;
+  }
+
+  const nextTitle = elements.tripTitleInput.value.trim();
+  if (!nextTitle) {
+    return;
+  }
+
+  setPending(true, "Renaming trip…");
+  try {
+    const payload = await requestJson(`/api/trips/${tripId}/rename`, {
+      method: "POST",
+      body: {
+        base_version: state.trip.version,
+        title: nextTitle,
+      },
+    });
+
+    state.trip = payload.trip;
+    state.preview = null;
+    state.previewMeta = null;
+    state.titleEditing = false;
+    render();
+    setPending(false, payload.summary ?? "Trip renamed.");
+  } catch (error) {
+    setPending(false, error.message, "error");
+  }
 });
 
 elements.assistantForm.addEventListener("submit", async (event) => {
@@ -179,6 +242,11 @@ elements.workspaceTabs.forEach((button) => {
 
     state.workspaceTab = tab;
     renderWorkspaceShell();
+    syncUrlState();
+  });
+
+  button.addEventListener("keydown", (event) => {
+    handleTabKeydown(elements.workspaceTabs, button, event);
   });
 });
 
@@ -191,7 +259,28 @@ elements.scheduleTabs.forEach((button) => {
 
     state.scheduleTab = tab;
     renderScheduleShell();
+    syncUrlState();
   });
+
+  button.addEventListener("keydown", (event) => {
+    handleTabKeydown(elements.scheduleTabs, button, event);
+  });
+});
+
+elements.exportCalendarButton.addEventListener("click", () => {
+  if (!state.selectedDay) {
+    return;
+  }
+
+  triggerDownload(`/api/trips/${tripId}/export/ics?day=${encodeURIComponent(state.selectedDay)}`);
+});
+
+elements.exportPdfButton.addEventListener("click", () => {
+  if (!state.selectedDay) {
+    return;
+  }
+
+  window.open(`/trips/${tripId}/print?day=${encodeURIComponent(state.selectedDay)}`, "_blank", "noopener");
 });
 
 elements.workspaceNotice.addEventListener("click", async (event) => {
@@ -214,6 +303,33 @@ elements.workspaceNotice.addEventListener("click", async (event) => {
     state.undoAction = null;
     renderWorkspaceNotice();
   }
+});
+
+elements.assistantDiff.addEventListener("click", async (event) => {
+  const repairTarget = event.target.closest("[data-conflict-action='repair']");
+  if (!repairTarget) {
+    return;
+  }
+
+  const conflictId = repairTarget.dataset.conflictId;
+  if (!conflictId) {
+    return;
+  }
+
+  await previewWithInput({
+    commands: [
+      {
+        command_id: `cmd_repair_${Date.now()}`,
+        action: "resolve_conflict",
+        item_id: repairTarget.dataset.itemId || undefined,
+        day_date: repairTarget.dataset.dayDate || state.selectedDay || undefined,
+        reason: "Repair current conflict",
+        payload: {
+          conflict_id: conflictId,
+        },
+      },
+    ],
+  });
 });
 
 elements.focusEditor.addEventListener("click", async (event) => {
@@ -481,6 +597,7 @@ async function loadTrip() {
   state.undoAction = null;
   state.provider = payload.workspace.provider ?? "mock";
   state.assistantProvider = payload.workspace.assistant?.provider ?? "rules";
+  state.storageMode = payload.workspace.storage?.mode ?? "memory";
   state.mapsBrowserApiKey = payload.workspace.maps?.browser_api_key ?? null;
   state.selectedDay = state.selectedDay ?? payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null;
   state.selectedItemId = inferDefaultSelectedItemId(payload.trip, state.selectedDay, state.selectedItemId);
@@ -565,11 +682,13 @@ function render() {
   const selectedItem = getSelectedItem(activeTrip, state.selectedDay, state.selectedItemId);
 
   elements.tripTitle.textContent = activeTrip.title;
+  document.title = activeTrip.title;
   elements.tripSubtitle.textContent = state.preview
-    ? "Preview mode: all panels are rendering from the draft itinerary."
-    : "Shared state across map, timeline, and the workspace.";
+    ? "Preview mode"
+    : "";
 
   renderMeta(activeTrip);
+  renderTitleEditor();
   renderDayTabs(activeTrip);
   renderScheduleShell();
   renderWorkspaceShell();
@@ -578,6 +697,18 @@ function render() {
   renderPlan(activeTrip, selectedDay, selectedItem);
   renderTimeline(activeTrip, selectedDay, selectedItem);
   renderAssistant(activeTrip, selectedDay, selectedItem);
+  syncUrlState();
+}
+
+function renderTitleEditor() {
+  const activeTrip = getActiveTrip();
+  const isEditing = state.titleEditing && Boolean(activeTrip);
+  elements.tripTitle.classList.toggle("hidden", isEditing);
+  elements.editTripTitleButton.classList.toggle("hidden", isEditing);
+  elements.tripTitleForm.classList.toggle("hidden", !isEditing);
+  if (isEditing && activeTrip) {
+    elements.tripTitleInput.value = activeTrip.title;
+  }
 }
 
 function renderMeta(trip) {
@@ -587,9 +718,6 @@ function renderMeta(trip) {
     pill(`${trip.travelers?.length ?? 0} travelers`),
     pill(`${items.filter((item) => item.locked).length} locked items`),
     pill(`${trip.conflicts.length} conflict${trip.conflicts.length === 1 ? "" : "s"}`),
-    pill(`provider: ${state.provider ?? "mock"}`),
-    pill(`assistant: ${state.assistantProvider}`),
-    pill(state.mapsBrowserApiKey ? "map key detected" : "map key missing"),
     state.preview ? pill("Preview active") : "",
   ].join("");
 }
@@ -616,10 +744,14 @@ function renderWorkspaceShell() {
   elements.workspaceTabs.forEach((button) => {
     const isActive = button.dataset.workspaceTab === state.workspaceTab;
     button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+    button.tabIndex = isActive ? 0 : -1;
   });
 
   elements.workspaceViews.forEach((view) => {
-    view.classList.toggle("hidden", view.dataset.workspaceView !== state.workspaceTab);
+    const isActive = view.dataset.workspaceView === state.workspaceTab;
+    view.classList.toggle("hidden", !isActive);
+    view.setAttribute("aria-hidden", String(!isActive));
   });
 }
 
@@ -627,10 +759,14 @@ function renderScheduleShell() {
   elements.scheduleTabs.forEach((button) => {
     const isActive = button.dataset.scheduleTab === state.scheduleTab;
     button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+    button.tabIndex = isActive ? 0 : -1;
   });
 
   elements.scheduleViews.forEach((view) => {
-    view.classList.toggle("hidden", view.dataset.scheduleView !== state.scheduleTab);
+    const isActive = view.dataset.scheduleView === state.scheduleTab;
+    view.classList.toggle("hidden", !isActive);
+    view.setAttribute("aria-hidden", String(!isActive));
   });
 }
 
@@ -639,9 +775,12 @@ function renderWorkspaceNotice() {
   elements.workspaceNotice.classList.toggle("hidden", !hasNotice);
   elements.workspaceNotice.classList.toggle("error", state.statusTone === "error");
   if (!hasNotice) {
+    elements.workspaceNotice.removeAttribute("role");
     elements.workspaceNotice.innerHTML = "";
     return;
   }
+
+  elements.workspaceNotice.setAttribute("role", state.statusTone === "error" ? "alert" : "status");
 
   const summaryText = state.undoAction?.summary ?? "";
   const summary = summaryText ? `<strong>${escapeHtml(summaryText)}</strong>` : "";
@@ -892,7 +1031,8 @@ function renderFocusedEditor(trip, day, selectedItem) {
             type="search"
             name="place_query"
             value="${replaceSession ? escapeHtml(replaceSession.query ?? "") : ""}"
-            placeholder="Search a replacement venue"
+            placeholder="Search a replacement venue…"
+            autocomplete="off"
             ${disabledAttr}>
         </label>
         <button type="submit" class="button" ${disabledAttr}>Search</button>
@@ -931,7 +1071,7 @@ function renderInsertComposer(session) {
       <form class="insert-search-form" data-editor-form="insert-search">
         <label>
           <span>Search query</span>
-          <input type="search" name="place_query" value="${escapeHtml(session.query ?? "")}" placeholder="Search nearby places">
+          <input type="search" name="place_query" value="${escapeHtml(session.query ?? "")}" placeholder="Search nearby places…" autocomplete="off">
         </label>
         <button type="submit" class="button">Search</button>
       </form>
@@ -1068,6 +1208,57 @@ function selectItem(itemId) {
   render();
 }
 
+function readUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  const scheduleTab = params.get("schedule") === "plan" ? "plan" : "timeline";
+  const workspaceTab = params.get("workspace") === "assistant" ? "assistant" : "selection";
+
+  return {
+    selectedDay: params.get("day") || null,
+    selectedItemId: params.get("item") || null,
+    scheduleTab,
+    workspaceTab,
+  };
+}
+
+function syncUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  writeUrlParam(params, "day", state.selectedDay);
+  writeUrlParam(params, "item", state.selectedItemId);
+  writeUrlParam(params, "schedule", state.scheduleTab !== "timeline" ? state.scheduleTab : null);
+  writeUrlParam(params, "workspace", state.workspaceTab !== "selection" ? state.workspaceTab : null);
+  const nextSearch = params.toString();
+  const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`;
+  window.history.replaceState({}, "", nextUrl);
+}
+
+function writeUrlParam(params, key, value) {
+  if (value) {
+    params.set(key, value);
+    return;
+  }
+
+  params.delete(key);
+}
+
+function handleTabKeydown(buttons, currentButton, event) {
+  if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") {
+    return;
+  }
+
+  const orderedButtons = Array.from(buttons);
+  const currentIndex = orderedButtons.indexOf(currentButton);
+  if (currentIndex === -1) {
+    return;
+  }
+
+  event.preventDefault();
+  const direction = event.key === "ArrowRight" ? 1 : -1;
+  const nextIndex = (currentIndex + direction + orderedButtons.length) % orderedButtons.length;
+  orderedButtons[nextIndex]?.click();
+  orderedButtons[nextIndex]?.focus();
+}
+
 function getAdjacentItem(trip, dayDate, itemId, direction) {
   if (!trip || !dayDate || !itemId) {
     return null;
@@ -1089,7 +1280,12 @@ function getAdjacentItem(trip, dayDate, itemId, direction) {
 
 function renderConflicts(trip, day) {
   const itemIds = new Set((day?.items ?? []).map((item) => item.id));
-  const conflicts = trip.conflicts.filter((conflict) => conflict.item_ids.some((itemId) => itemIds.has(itemId)));
+  const conflicts = trip.conflicts.filter((conflict) => {
+    if (conflict.item_ids.length === 0) {
+      return Boolean(day?.date && conflict.id.includes(day.date));
+    }
+    return conflict.item_ids.some((itemId) => itemIds.has(itemId));
+  });
   if (conflicts.length === 0) {
     return "<div class=\"diff-meta\">No current conflicts on this day.</div>";
   }
@@ -1097,10 +1293,34 @@ function renderConflicts(trip, day) {
   return `
     <ul class="diff-list">
       ${conflicts
-        .map((conflict) => `<li class="${conflict.severity === "error" ? "conflict-error" : ""}">${escapeHtml(conflict.message)}</li>`)
+        .map((conflict) => {
+          const repairButton = isRepairableConflict(conflict)
+            ? `<button type="button" class="button button-small" data-conflict-action="repair" data-conflict-id="${escapeHtml(conflict.id)}" data-item-id="${escapeHtml(conflict.item_ids[0] ?? "")}" data-day-date="${escapeHtml(day?.date ?? "")}">Repair</button>`
+            : "";
+          const hint = conflict.resolution_hint ? `<div class="diff-meta">${escapeHtml(conflict.resolution_hint)}</div>` : "";
+          return `
+            <li class="${conflict.severity === "error" ? "conflict-error" : ""}">
+              <div class="conflict-row">
+                <span>${escapeHtml(conflict.message)}</span>
+                ${repairButton}
+              </div>
+              ${hint}
+            </li>
+          `;
+        })
         .join("")}
     </ul>
   `;
+}
+
+function isRepairableConflict(conflict) {
+  return [
+    "opening_hours_conflict",
+    "travel_time_underestimated",
+    "overlap_conflict",
+    "meal_window_missing",
+    "pace_limit_exceeded",
+  ].includes(conflict.type);
 }
 
 function buildQuickActionInput(action, dayDate) {
@@ -1270,6 +1490,15 @@ async function requestJson(url, options = {}) {
   }
 
   return payload.data;
+}
+
+function triggerDownload(url) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 function setPending(value, message, tone = "neutral") {

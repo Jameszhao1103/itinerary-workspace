@@ -2,6 +2,7 @@ export * from "./command-executor.ts";
 export * from "./derivations.ts";
 export * from "./diff.ts";
 export * from "./errors.ts";
+export * from "./export.ts";
 export * from "./fallback-command-translator.ts";
 export * from "./ids.ts";
 export * from "./openai-command-translator.ts";

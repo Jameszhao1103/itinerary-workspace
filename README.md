@@ -38,6 +38,19 @@ What works today:
   - click `Map`, `Timeline`, or `Plan`
   - the same item is focused everywhere
 - Route and opening-hours validation
+- Conflict repair previews for supported issues:
+  - overlap
+  - travel time underestimated
+  - missing lunch / dinner
+  - packed day / long walk segments
+- File-backed trip persistence for local development
+- Lightweight observability:
+  - structured request logs
+  - runtime metrics
+  - Places / Routes response caching
+- Export support:
+  - `.ics` for Apple Calendar and other calendar apps
+  - print-friendly HTML for browser or system “Save as PDF”
 - Real provider support:
   - Google Places + Routes
   - OpenAI command translation
@@ -123,6 +136,7 @@ This is useful for validating live place search, routing, and natural-language m
 
 - Node.js 24+
 - no database required for the current MVP
+- local persistence uses JSON files under `.data/` by default
 
 ### Run locally
 
@@ -173,6 +187,24 @@ Notes:
 
 If you only set the server key, Google Places / Routes can still run, but the browser map will not load live Google tiles.
 
+### Storage and observability
+
+```bash
+PLANNER_STORAGE_MODE=file
+PLANNER_DATA_DIR=.data/trips
+PLANNER_LOG_REQUESTS=1
+PLANNER_LOG_LEVEL=info
+PLANNER_CACHE_TTL_MS=300000
+PLANNER_PLACE_DETAILS_CACHE_TTL_MS=1800000
+```
+
+Notes:
+
+- `PLANNER_STORAGE_MODE=file` persists the canonical trip locally between restarts
+- `PLANNER_STORAGE_MODE=memory` restores the old demo-style ephemeral runtime
+- request logs are JSON lines written to stdout
+- Places / Routes calls are cached in-process to reduce repeated API spend during iteration
+
 ### OpenAI configuration
 
 ```bash
@@ -204,6 +236,7 @@ Useful live checks:
 
 - provider pill shows `google`
 - assistant provider shows `openai` when configured
+- storage pill shows `file` when persistence is enabled
 - map loads live Google tiles when `GOOGLE_MAPS_BROWSER_API_KEY` is set
 - assistant requests produce preview diffs against real providers
 
@@ -229,6 +262,9 @@ Main local API routes:
 - `POST /api/trips/:tripId/commands/reject`
 - `POST /api/debug/reset`
 - `GET /api/debug/runtime`
+- `GET /api/debug/metrics`
+- `GET /api/trips/:tripId/export/ics`
+- `GET /trips/:tripId/print`
 
 There are two mutation paths:
 
@@ -236,6 +272,15 @@ There are two mutation paths:
    Use for AI changes and larger edits such as replace / insert.
 2. `execute`
    Use for direct user edits such as lock, move, reorder, and undo.
+
+## Export and Sharing
+
+The current export path is intentionally pragmatic:
+
+- `Export ICS` downloads a standards-based `.ics` file that Apple Calendar can import directly
+- `Print / Save PDF` opens a print-friendly HTML view; use your browser or system print dialog to save it as PDF
+
+This avoids pulling in a heavy PDF generation stack while still producing a format users can actually keep and share.
 
 ## Repository Structure
 
@@ -258,6 +303,15 @@ There are two mutation paths:
 - `server/planner/planner-service.ts`
 - `server/planner/command-executor.ts`
 - `server/planner/derivations.ts`
+- `server/planner/export.ts`
+- `server/planner/repositories.ts`
+
+## Current Limits
+
+- persistence is file-backed for now, not yet multi-user or database-backed
+- metrics are process-local and reset when the server restarts
+- PDF export is currently print-to-PDF, not headless server-side PDF rendering
+- calendar export skips synthetic transit/buffer blocks to keep calendars readable
 - `server/planner/diff.ts`
 - `server/planner/types.ts`
 

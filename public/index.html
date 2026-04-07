@@ -3,15 +3,30 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Planner Workspace</title>
+    <title>Asheville Long Weekend</title>
     <link rel="stylesheet" href="/app.css">
   </head>
   <body>
     <main class="shell">
       <section class="header">
         <div class="title">
-          <h1 id="tripTitle">Planner Workspace</h1>
-          <p id="tripSubtitle">Shared state across map, timeline, plan, and assistant.</p>
+          <div class="title-kicker">AI-assisted itinerary editor</div>
+          <div class="title-row">
+            <h1 id="tripTitle">Asheville Long Weekend</h1>
+            <button
+              type="button"
+              class="button title-edit-trigger icon-button"
+              id="editTripTitleButton"
+              aria-label="Rename trip title"
+              title="Rename trip title"
+            ></button>
+          </div>
+          <form class="title-edit-form hidden" id="tripTitleForm">
+            <input type="text" id="tripTitleInput" name="title" maxlength="120" aria-label="Trip title" autocomplete="off">
+            <button type="submit" class="button button-primary">Save</button>
+            <button type="button" class="button" id="cancelTripTitleButton">Cancel</button>
+          </form>
+          <p id="tripSubtitle"></p>
         </div>
         <div class="meta" id="metaPills"></div>
         <div class="global-day-switcher">
@@ -22,7 +37,13 @@
 
       <section class="grid">
         <article class="panel map">
-          <h2>Map</h2>
+          <div class="panel-copy">
+            <div class="panel-kicker">Spatial View</div>
+            <div class="panel-heading-row">
+              <h2>Map</h2>
+              <p>See the current day as connected places and movement paths.</p>
+            </div>
+          </div>
           <div class="map-frame">
             <div class="map-canvas" id="mapCanvas"></div>
             <div class="map-status hidden" id="mapStatus"></div>
@@ -38,45 +59,67 @@
         </article>
         <section class="right-rail">
           <article class="panel schedule">
-            <div class="workspace-header">
-              <h2>Schedule</h2>
-              <div class="workspace-tabs">
-                <button type="button" class="workspace-tab active" data-schedule-tab="timeline">Timeline</button>
-                <button type="button" class="workspace-tab" data-schedule-tab="plan">Plan</button>
+            <div class="schedule-header">
+              <div class="schedule-copy">
+                <div class="schedule-kicker">Daily View</div>
+                <h2>Schedule</h2>
+                <p>Switch between the pacing view and the written plan for the active day.</p>
+              </div>
+              <div class="schedule-toolbar">
+                <div class="schedule-switch" role="tablist" aria-label="Schedule view">
+                  <button type="button" class="schedule-tab active" id="scheduleTabTimeline" role="tab" aria-selected="true" aria-controls="schedulePanelTimeline" tabindex="0" data-schedule-tab="timeline">Timeline</button>
+                  <button type="button" class="schedule-tab" id="scheduleTabPlan" role="tab" aria-selected="false" aria-controls="schedulePanelPlan" tabindex="-1" data-schedule-tab="plan">Plan</button>
+                </div>
+                <div class="schedule-export-actions">
+                  <button type="button" class="button schedule-action" id="exportCalendarButton">Calendar (.ics)</button>
+                  <button type="button" class="button schedule-action" id="exportPdfButton">Print / PDF</button>
+                </div>
               </div>
             </div>
-            <div class="workspace-body">
-              <section class="workspace-view" data-schedule-view="timeline">
-                <div id="timelinePanel"></div>
-              </section>
-              <section class="workspace-view hidden" data-schedule-view="plan">
-                <div id="planPanel"></div>
-              </section>
+            <div class="schedule-surface">
+              <div class="workspace-body">
+                <section class="workspace-view" id="schedulePanelTimeline" role="tabpanel" aria-labelledby="scheduleTabTimeline" data-schedule-view="timeline">
+                  <div id="timelinePanel"></div>
+                </section>
+                <section class="workspace-view hidden" id="schedulePanelPlan" role="tabpanel" aria-labelledby="scheduleTabPlan" data-schedule-view="plan">
+                  <div id="planPanel"></div>
+                </section>
+              </div>
             </div>
           </article>
 
           <article class="panel workspace">
             <div class="workspace-header">
-              <h2>Workspace</h2>
-              <div class="workspace-tabs">
-                <button type="button" class="workspace-tab active" data-workspace-tab="selection">Selection</button>
-                <button type="button" class="workspace-tab" data-workspace-tab="assistant">Assistant</button>
+              <div class="workspace-copy">
+                <div class="panel-kicker">Editing View</div>
+                <div class="panel-heading-row">
+                  <h2>Workspace</h2>
+                  <p>Edit the selected stop or ask AI for a broader revision.</p>
+                </div>
+              </div>
+              <div class="workspace-switch" role="tablist" aria-label="Workspace view">
+                <div class="workspace-tabs">
+                  <button type="button" class="workspace-tab active" id="workspaceTabSelection" role="tab" aria-selected="true" aria-controls="workspacePanelSelection" tabindex="0" data-workspace-tab="selection">Selection</button>
+                  <button type="button" class="workspace-tab" id="workspaceTabAssistant" role="tab" aria-selected="false" aria-controls="workspacePanelAssistant" tabindex="-1" data-workspace-tab="assistant">Assistant</button>
+                </div>
               </div>
             </div>
 
-            <div class="workspace-notice hidden" id="workspaceNotice"></div>
+            <div class="workspace-notice hidden" id="workspaceNotice" aria-live="polite" aria-atomic="true"></div>
 
             <div class="workspace-body">
-              <section class="workspace-view" data-workspace-view="selection">
+              <section class="workspace-view" id="workspacePanelSelection" role="tabpanel" aria-labelledby="workspaceTabSelection" data-workspace-view="selection">
                 <div class="focus-editor" id="focusEditor"></div>
               </section>
 
-              <section class="workspace-view hidden assistant" data-workspace-view="assistant">
+              <section class="workspace-view hidden assistant" id="workspacePanelAssistant" role="tabpanel" aria-labelledby="workspaceTabAssistant" data-workspace-view="assistant">
                 <form id="assistantForm" class="assistant-form">
+                  <label class="sr-only" for="assistantInput">Assistant request</label>
                   <textarea
                     id="assistantInput"
+                    name="assistant_request"
                     class="chat-input"
-                    placeholder="Try: 把当前这天的晚餐换成评分高一点的美式餐厅"
+                    placeholder="Try: 把当前这天的晚餐换成评分高一点的美式餐厅…"
                   ></textarea>
                   <div class="assistant-toolbar">
                     <button type="submit" class="button button-primary">Preview</button>
@@ -89,7 +132,7 @@
                   <button type="button" class="action" data-quick-action="add-lunch">Add lunch</button>
                   <button type="button" class="action" data-quick-action="relax-day">Relax schedule</button>
                 </div>
-                <div class="assistant-status" id="assistantStatus">Loading trip…</div>
+                <div class="assistant-status" id="assistantStatus" role="status" aria-live="polite" aria-atomic="true">Loading trip…</div>
                 <div class="diff" id="assistantDiff"></div>
                 <div class="assistant-toolbar">
                   <button type="button" class="button button-primary hidden" id="applyButton">Apply preview</button>

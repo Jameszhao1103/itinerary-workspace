@@ -93,7 +93,7 @@ async function executeCommand(
       compressDay(itinerary, command);
       return;
     case "resolve_conflict":
-      resolveConflict(itinerary, command);
+      await resolveConflict(itinerary, command, context);
       return;
     case "regenerate_markdown":
       return;
@@ -306,7 +306,7 @@ async function fillMeal(
   const anchorPlaceId = command.constraints?.near_place_id ?? anchorItem?.place_id;
   const nearPlace = anchorPlaceId ? itinerary.places.find((place) => place.place_id === anchorPlaceId) : undefined;
 
-  const candidates = await searchCandidatesWithFallback(context, {
+  let candidates = await searchCandidatesWithFallback(context, {
     query: command.place_query ?? `${mealType} near ${nearPlace?.name ?? itinerary.title}`,
     includedType: "restaurant",
     minRating: command.constraints?.min_rating,
@@ -319,6 +319,28 @@ async function fillMeal(
       : undefined,
     pageSize: 5,
   });
+
+  if (candidates.length === 0) {
+    candidates = await context.placesAdapter.searchByText({
+      query: nearPlace?.name ?? itinerary.title,
+      includedType: "restaurant",
+      locationBias: nearPlace
+        ? {
+            center: { lat: nearPlace.lat, lng: nearPlace.lng },
+            radiusMeters: 4000,
+          }
+        : undefined,
+      pageSize: 5,
+    });
+  }
+
+  if (candidates.length === 0) {
+    candidates = await context.placesAdapter.searchByText({
+      query: "",
+      includedType: "restaurant",
+      pageSize: 5,
+    });
+  }
 
   const offset = day.items[0]?.start_at.match(/(Z|[+-]\d{2}:\d{2})$/)?.[1] ?? "Z";
   const startAt = combineLocalDateTime(day.date, pickMealStart(window, day), offset);
@@ -437,7 +459,11 @@ function relaxDay(itinerary: Itinerary, command: PlannerCommand): void {
   }
 }
 
-function resolveConflict(itinerary: Itinerary, command: PlannerCommand): void {
+async function resolveConflict(
+  itinerary: Itinerary,
+  command: PlannerCommand,
+  context: CommandExecutionContext
+): Promise<void> {
   const conflictId =
     typeof command.payload?.conflict_id === "string"
       ? command.payload.conflict_id
@@ -460,6 +486,7 @@ function resolveConflict(itinerary: Itinerary, command: PlannerCommand): void {
       item.end_at = endAt;
       item.start_at = addMinutesToIso(endAt, -duration);
     }
+    return;
   }
 
   if (conflict.type === "travel_time_underestimated" && conflict.item_ids.length >= 2) {
@@ -473,7 +500,89 @@ function resolveConflict(itinerary: Itinerary, command: PlannerCommand): void {
       current.start_at = addMinutesToIso(previous.end_at, route.duration_minutes);
       current.end_at = addMinutesToIso(current.start_at, duration);
     }
+    return;
   }
+
+  if (conflict.type === "overlap_conflict" && conflict.item_ids.length >= 2) {
+    const previous = findItem(itinerary, conflict.item_ids[0]);
+    const current = findItem(itinerary, conflict.item_ids[1]);
+
+    if (!current.locked) {
+      const duration = current.duration_minutes ?? Math.max(0, minutesBetween(current.start_at, current.end_at));
+      current.start_at = previous.end_at;
+      current.end_at = addMinutesToIso(current.start_at, duration);
+      return;
+    }
+
+    if (!previous.locked) {
+      const duration = previous.duration_minutes ?? Math.max(0, minutesBetween(previous.start_at, previous.end_at));
+      previous.end_at = current.start_at;
+      previous.start_at = addMinutesToIso(previous.end_at, -duration);
+      return;
+    }
+
+    throw new PlannerError(
+      "locked_item_violation",
+      "Both overlapping items are locked, so the conflict cannot be repaired automatically."
+    );
+  }
+
+  if (conflict.type === "meal_window_missing") {
+    const dayDate = command.day_date ?? extractDayDateFromConflict(conflict.id);
+    const mealType = extractMealTypeFromConflict(conflict.id);
+    if (!dayDate || !mealType) {
+      throw new PlannerError("invalid_command", "meal_window_missing repair requires a day and meal type.");
+    }
+
+    await fillMeal(itinerary, {
+      command_id: command.command_id,
+      action: "fill_meal",
+      day_date: dayDate,
+      item_id: command.item_id,
+      reason: command.reason || `Resolve missing ${mealType}`,
+      payload: {
+        meal_type: mealType,
+      },
+    }, context);
+    return;
+  }
+
+  if (conflict.type === "pace_limit_exceeded") {
+    if (conflict.item_ids.length >= 2) {
+      setTransportMode(itinerary, {
+        ...command,
+        action: "set_transport_mode",
+        item_id: conflict.item_ids[0],
+        target_item_id: conflict.item_ids[1],
+        mode: "taxi",
+        reason: command.reason || "Resolve walking pace conflict",
+      });
+      return;
+    }
+
+    const dayDate = command.day_date ?? extractDayDateFromConflict(conflict.id);
+    if (!dayDate) {
+      throw new PlannerError("invalid_command", "pace_limit_exceeded repair requires a day.");
+    }
+
+    relaxDay(itinerary, {
+      ...command,
+      action: "relax_day",
+      day_date: dayDate,
+      reason: command.reason || "Resolve packed-day conflict",
+    });
+    return;
+  }
+}
+
+function extractMealTypeFromConflict(conflictId: string): "breakfast" | "lunch" | "dinner" | null {
+  const match = conflictId.match(/^meal_(breakfast|lunch|dinner)_/u);
+  return match?.[1] as "breakfast" | "lunch" | "dinner" | null;
+}
+
+function extractDayDateFromConflict(conflictId: string): string | null {
+  const match = conflictId.match(/(\d{4}-\d{2}-\d{2})$/u);
+  return match?.[1] ?? null;
 }
 
 async function resolvePlace(

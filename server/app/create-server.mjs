@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildCalendarExport, buildPrintableDocument } from "../planner/index.ts";
+import { PlannerError } from "../planner/errors.ts";
 import { createRuntime } from "./create-runtime.mjs";
 import { handleAppRequest, toErrorResponse } from "./app-router.mjs";
 
@@ -12,40 +14,95 @@ export async function createAppServer() {
   let runtime = await createRuntime();
 
   const server = createServer(async (request, response) => {
-    try {
-      const url = new URL(request.url ?? "/", "http://localhost");
-      const pathname = url.pathname;
+    const startedAt = Date.now();
+    const method = request.method ?? "GET";
+    const url = new URL(request.url ?? "/", "http://localhost");
+    const pathname = url.pathname;
 
-      if (request.method === "GET" && pathname === "/") {
-        return serveStatic(response, "index.html");
+    try {
+      if (method === "GET" && pathname === "/") {
+        await serveStatic(response, "index.html");
+        recordRuntimeRequest(runtime, method, pathname, 200, startedAt);
+        return;
       }
 
-      if (request.method === "GET" && (pathname === "/app.js" || pathname === "/app.css")) {
-        return serveStatic(response, pathname.slice(1));
+      if (method === "GET" && (pathname === "/app.js" || pathname === "/app.css")) {
+        await serveStatic(response, pathname.slice(1));
+        recordRuntimeRequest(runtime, method, pathname, 200, startedAt);
+        return;
+      }
+
+      if (method === "GET" && pathname.match(/^\/api\/trips\/[^/]+\/export\/ics$/)) {
+        const tripId = pathname.split("/")[3];
+        const trip = await runtime.tripRepository.getTripById(tripId);
+        if (!trip) {
+          throw new PlannerError("trip_not_found", `Trip not found: ${tripId}`);
+        }
+        const dayDate = url.searchParams.get("day");
+        const exportPayload = buildCalendarExport(trip, { dayDate });
+        writeText(response, 200, exportPayload.content, "text/calendar; charset=utf-8", {
+          "Content-Disposition": `attachment; filename="${exportPayload.fileName}"`,
+          "Cache-Control": "no-store",
+        });
+        recordRuntimeRequest(runtime, method, "/api/trips/:tripId/export/ics", 200, startedAt);
+        return;
+      }
+
+      if (method === "GET" && pathname.match(/^\/trips\/[^/]+\/print$/)) {
+        const tripId = pathname.split("/")[2];
+        const trip = await runtime.tripRepository.getTripById(tripId);
+        if (!trip) {
+          throw new PlannerError("trip_not_found", `Trip not found: ${tripId}`);
+        }
+        const dayDate = url.searchParams.get("day");
+        const documentPayload = buildPrintableDocument(trip, { dayDate });
+        writeText(response, 200, documentPayload.content, "text/html; charset=utf-8", {
+          "Cache-Control": "no-store",
+        });
+        recordRuntimeRequest(runtime, method, "/trips/:tripId/print", 200, startedAt);
+        return;
       }
 
       if (pathname.startsWith("/api/")) {
         const routeResponse = await handleAppRequest(runtime, {
-          method: request.method,
+          method,
           url: request.url ?? pathname,
-          body: request.method === "POST" ? await readJsonBody(request) : undefined,
+          body: method === "POST" ? await readJsonBody(request) : undefined,
         });
         if (pathname === "/api/debug/reset" && routeResponse.payload.ok) {
           runtime = await createRuntime();
         }
-        return writeJson(response, routeResponse.status, routeResponse.payload);
+        writeJson(response, routeResponse.status, routeResponse.payload);
+        recordRuntimeRequest(runtime, method, pathname, routeResponse.status, startedAt);
+        return;
       }
 
-      return writeJson(response, 404, {
+      writeJson(response, 404, {
         ok: false,
         error: {
           code: "not_found",
-          message: `No route for ${request.method} ${pathname}`,
+          message: `No route for ${method} ${pathname}`,
         },
       });
+      recordRuntimeRequest(runtime, method, pathname, 404, startedAt);
+      return;
     } catch (error) {
       const routeResponse = toErrorResponse(error);
-      return writeJson(response, routeResponse.status, routeResponse.payload);
+      writeJson(response, routeResponse.status, routeResponse.payload);
+      runtime.logger?.error("request.error", {
+        method,
+        route: normalizeMetricsRoute(pathname),
+        status: routeResponse.status,
+        duration_ms: Date.now() - startedAt,
+        message: error instanceof Error ? error.message : "Unknown server error.",
+      });
+      runtime.metrics?.recordRequest({
+        method,
+        route: normalizeMetricsRoute(pathname),
+        status: routeResponse.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return;
     }
   });
 
@@ -88,6 +145,14 @@ function writeJson(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function writeText(response, status, payload, contentType, headers = {}) {
+  response.writeHead(status, {
+    "Content-Type": contentType,
+    ...headers,
+  });
+  response.end(payload);
+}
+
 function contentTypeFor(filePath) {
   switch (extname(filePath)) {
     case ".css":
@@ -97,4 +162,27 @@ function contentTypeFor(filePath) {
     default:
       return "text/html; charset=utf-8";
   }
+}
+
+function normalizeMetricsRoute(pathname) {
+  return pathname
+    .replace(/^\/api\/trips\/[^/]+/u, "/api/trips/:tripId")
+    .replace(/^\/trips\/[^/]+/u, "/trips/:tripId");
+}
+
+function recordRuntimeRequest(runtime, method, pathname, status, startedAt) {
+  const route = normalizeMetricsRoute(pathname);
+  const durationMs = Date.now() - startedAt;
+  runtime.metrics?.recordRequest({
+    method,
+    route,
+    status,
+    durationMs,
+  });
+  runtime.logger?.info("request.complete", {
+    method,
+    route,
+    status,
+    duration_ms: durationMs,
+  });
 }

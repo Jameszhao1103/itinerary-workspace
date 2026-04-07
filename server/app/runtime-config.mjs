@@ -22,6 +22,27 @@ export function resolveMapsBrowserApiKey(env = resolveRuntimeEnv()) {
   );
 }
 
+export function resolveStorageMode(env = resolveRuntimeEnv()) {
+  const mode = env.PLANNER_STORAGE_MODE ?? "file";
+  return mode === "memory" ? "memory" : "file";
+}
+
+export function resolveStorageDirectory(env = resolveRuntimeEnv()) {
+  return env.PLANNER_DATA_DIR ?? ".data/trips";
+}
+
+export function resolveObservabilityConfig(env = resolveRuntimeEnv()) {
+  return {
+    logRequests: env.PLANNER_LOG_REQUESTS !== "0",
+    logLevel: env.PLANNER_LOG_LEVEL ?? "info",
+    cacheTtlMs: Number.parseInt(env.PLANNER_CACHE_TTL_MS ?? "300000", 10) || 300000,
+    placeDetailsCacheTtlMs:
+      Number.parseInt(env.PLANNER_PLACE_DETAILS_CACHE_TTL_MS ?? "", 10) ||
+      Number.parseInt(env.PLANNER_CACHE_TTL_MS ?? "1800000", 10) ||
+      1800000,
+  };
+}
+
 export function resolveOpenAiConfig(env = resolveRuntimeEnv()) {
   return {
     apiKey: env.OPENAI_API_KEY ?? null,

@@ -11,6 +11,8 @@ import type {
   PlannerDependencies,
   PlannerExecuteRequest,
   PlannerExecuteResponse,
+  PlannerRenameTripRequest,
+  PlannerRenameTripResponse,
   PlannerCommand,
   PlannerPreview,
   PlannerPreviewRequest,
@@ -168,6 +170,42 @@ export class PlannerService {
       changed_item_ids: diff.patch.changed_item_ids,
       summary: diff.summary,
       undo_commands: undoCommands,
+    };
+  }
+
+  async renameTrip(input: PlannerRenameTripRequest): Promise<PlannerRenameTripResponse> {
+    const nextTitle = input.title.trim();
+    if (!nextTitle) {
+      throw new PlannerError("invalid_command", "Trip title cannot be empty.");
+    }
+
+    const trip = await this.loadTripForMutation(input.tripId, input.baseVersion);
+    if (trip.title === nextTitle) {
+      return {
+        trip,
+        summary: "Trip title unchanged.",
+      };
+    }
+
+    const now = this.now().toISOString();
+    const savedTrip = await this.tripRepository.saveTrip({
+      ...trip,
+      version: trip.version + 1,
+      title: nextTitle,
+      change_log: [
+        ...trip.change_log,
+        {
+          id: createId("change"),
+          timestamp: now,
+          actor: "user",
+          summary: `Renamed trip to ${nextTitle}.`,
+        },
+      ],
+    });
+
+    return {
+      trip: savedTrip,
+      summary: `Trip renamed to ${nextTitle}.`,
     };
   }
 
