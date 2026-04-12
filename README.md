@@ -11,9 +11,9 @@ This project explores a different UX from the usual one-shot trip generator. Ins
 
 The goal is simple: let AI help with travel planning without taking control away from the user.
 
-## Screenshot
+## Product Preview
 
-![Itinerary Workspace current UI](docs/screenshots/workspace-current-ui.png)
+![Itinerary Workspace preview](docs/screenshots/workspace-hero.svg)
 
 ## Highlights
 
