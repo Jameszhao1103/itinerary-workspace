@@ -27,7 +27,7 @@ The goal is simple: let AI help with travel planning without taking control away
 - trip quality score summarizing unresolved places, open conflicts, review items, and kept conflicts, with click-through drill-down into the relevant queue
 - replace and insert places through search + diff previews
 - route and opening-hours validation
-- conflict grading, locate actions, repair previews, persisted keep-as-is review decisions, and review-history audit trail
+- conflict grading, filters, batch keep-as-is, locate actions, repair previews, persisted review decisions, and review-history audit trail
 - conflict repair previews for overlap, travel-time, meal-gap, and pacing issues
 - multi-step undo / redo for direct edits
 - `.ics` calendar export and print-friendly HTML export

@@ -1,4 +1,5 @@
 import { requestJson, triggerDownload } from "./api.js";
+import { classifyConflict, conflictFilterLabel, countConflictGrades, filterConflictsForView, normalizeConflictFilter } from "./conflict-controls.js";
 import { buildPostImportReviewMessage, renderTripImportReviewChecklist } from "./import-review.js";
 import { createMapController } from "./map.js";
 import { collectUnresolvedPlaceItems, renderPlaceResolutionQueue } from "./place-resolution.js";
@@ -18,6 +19,7 @@ const state = {
   highlightedConflictId: null,
   ignoredConflictIds: new Set(),
   showReviewedConflicts: false,
+  conflictFilter: "all",
   scheduleTab: "timeline",
   workspaceTab: "selection",
   pending: false,
@@ -603,6 +605,24 @@ elements.assistantDiff.addEventListener("click", async (event) => {
     state.statusTone = "neutral";
     renderWorkspaceNotice();
     elements.assistantStatus.textContent = state.statusMessage;
+    return;
+  }
+
+  const filterTarget = event.target.closest("[data-conflict-action='set-filter']");
+  if (filterTarget) {
+    state.conflictFilter = normalizeConflictFilter(filterTarget.dataset.conflictFilter);
+    clearConflictHighlight();
+    render();
+    state.statusMessage = `Showing ${conflictFilterLabel(state.conflictFilter).toLowerCase()} conflicts.`;
+    state.statusTone = "neutral";
+    renderWorkspaceNotice();
+    elements.assistantStatus.textContent = state.statusMessage;
+    return;
+  }
+
+  const reviewAllTarget = event.target.closest("[data-conflict-action='review-all']");
+  if (reviewAllTarget) {
+    await reviewAllVisibleReviewConflicts();
     return;
   }
 
@@ -1801,6 +1821,8 @@ function renderAssistant(trip, day, selectedItem, highlightedConflict) {
       ${renderConflicts(trip, day, {
         highlightedConflictId: highlightedConflict?.id ?? null,
         title: "Current conflicts",
+        enableFilters: true,
+        enableBulkActions: true,
       })}
       ${renderReviewHistory(trip)}
     `;
@@ -2297,6 +2319,41 @@ function drillIntoUnresolvedPlace(trip) {
   clearPlaceSearchSession();
   render();
   setPending(false, `Showing ${first.item.title}. Use Search to resolve its map match.`);
+}
+
+async function reviewAllVisibleReviewConflicts() {
+  const activeTrip = state.trip;
+  const day = activeTrip?.days.find((candidate) => candidate.date === state.selectedDay) ?? null;
+  if (!activeTrip || !day) {
+    setPending(false, "No selected day to review.");
+    return;
+  }
+
+  const reviewConflicts = collectDayConflicts(activeTrip, day)
+    .filter((conflict) => !isConflictHidden(activeTrip, conflict.id))
+    .filter((conflict) => classifyConflict(conflict).level === "review");
+  if (reviewConflicts.length === 0) {
+    setPending(false, "No review conflicts to keep.");
+    return;
+  }
+
+  await executeImmediately({
+    commands: reviewConflicts.map((conflict, index) => ({
+      command_id: `cmd_review_all_${Date.now()}_${index}`,
+      action: "review_conflict",
+      reason: "Keep review conflict as-is",
+      payload: {
+        conflict_id: conflict.id,
+        decision: "accepted",
+        reason: "User accepted this review-level conflict as-is.",
+      },
+    })),
+  }, {
+    pendingMessage: `Saving ${formatCountLabel(reviewConflicts.length, "review item")}…`,
+    successMessage: `Kept ${formatCountLabel(reviewConflicts.length, "review item")} as-is.`,
+    workspaceTab: "assistant",
+    clearSearch: false,
+  });
 }
 
 function drillIntoConflict(trip, conflict, options = {}) {
@@ -3641,25 +3698,26 @@ function findIncomingRoute(trip, itemId) {
 }
 
 function renderConflicts(trip, day, options = {}) {
-  const itemIds = new Set((day?.items ?? []).map((item) => item.id));
-  const allConflicts = trip.conflicts.filter((conflict) => {
-    if (options.conflictIds?.length) {
-      return options.conflictIds.includes(conflict.id);
-    }
-    if (conflict.item_ids.length === 0) {
-      return Boolean(day?.date && conflict.id.includes(day.date));
-    }
-    return conflict.item_ids.some((itemId) => itemIds.has(itemId));
-  });
+  const allConflicts = collectDayConflicts(trip, day, { conflictIds: options.conflictIds });
   const conflicts = options.allowIgnore === false
     ? allConflicts
     : allConflicts.filter((conflict) => !isConflictHidden(trip, conflict.id));
+  const visibleConflicts = options.enableFilters
+    ? filterConflictsForView(conflicts, state.conflictFilter)
+    : conflicts;
   const ignoredNote = options.allowIgnore === false
     ? ""
     : renderHiddenConflictsNote(allConflicts.length - conflicts.length);
+  const toolbar = options.enableFilters || options.enableBulkActions
+    ? renderConflictToolbar(conflicts, {
+      enableFilters: Boolean(options.enableFilters),
+      enableBulkActions: Boolean(options.enableBulkActions),
+    })
+    : "";
 
   if (conflicts.length === 0) {
     return `
+      ${toolbar}
       <div class="diff-meta">
         ${escapeHtml(options.emptyText ?? "No current conflicts on this day.")}
         ${ignoredNote}
@@ -3667,10 +3725,21 @@ function renderConflicts(trip, day, options = {}) {
     `;
   }
 
+  if (visibleConflicts.length === 0) {
+    return `
+      ${toolbar}
+      <div class="diff-meta">
+        No conflicts match this filter.
+        ${ignoredNote}
+      </div>
+    `;
+  }
+
   return `
+    ${toolbar}
     ${renderConflictSnapshotList(
     options.title ?? "Conflicts",
-    conflicts.map((conflict) => ({
+    visibleConflicts.map((conflict) => ({
       id: conflict.id,
       type: conflict.type,
       severity: conflict.severity,
@@ -3687,6 +3756,19 @@ function renderConflicts(trip, day, options = {}) {
   )}
     ${ignoredNote}
   `;
+}
+
+function collectDayConflicts(trip, day, options = {}) {
+  const itemIds = new Set((day?.items ?? []).map((item) => item.id));
+  return (trip?.conflicts ?? []).filter((conflict) => {
+    if (options.conflictIds?.length) {
+      return options.conflictIds.includes(conflict.id);
+    }
+    if (conflict.item_ids.length === 0) {
+      return Boolean(day?.date && conflict.id.includes(day.date));
+    }
+    return conflict.item_ids.some((itemId) => itemIds.has(itemId));
+  });
 }
 
 function renderConflictSnapshotList(title, conflicts, options = {}) {
@@ -3753,45 +3835,51 @@ function renderConflictSnapshotList(title, conflicts, options = {}) {
   `;
 }
 
+function renderConflictToolbar(conflicts, options = {}) {
+  const counts = countConflictGrades(conflicts);
+  const filterButtons = options.enableFilters
+    ? ["all", "must-fix", "review"].map((filter) => {
+      const count = filter === "all" ? conflicts.length : counts[filter];
+      const active = state.conflictFilter === filter;
+      return `
+        <button
+          type="button"
+          class="button button-small${active ? " button-primary" : ""}"
+          data-conflict-action="set-filter"
+          data-conflict-filter="${escapeHtml(filter)}">
+          ${escapeHtml(conflictFilterLabel(filter))} (${NUMBER_FORMATTER.format(count)})
+        </button>
+      `;
+    }).join("")
+    : "";
+  const bulkButton = options.enableBulkActions
+    ? `
+      <button
+        type="button"
+        class="button button-small"
+        data-conflict-action="review-all"
+        ${counts.review > 0 ? "" : "disabled"}>
+        Keep all review items
+      </button>
+    `
+    : "";
+
+  if (!filterButtons && !bulkButton) {
+    return "";
+  }
+
+  return `
+    <div class="conflict-toolbar" aria-label="Conflict controls">
+      <div class="conflict-filter-group">${filterButtons}</div>
+      <div class="conflict-bulk-actions">${bulkButton}</div>
+    </div>
+  `;
+}
+
 function enrichConflictSnapshot(conflict) {
   return {
     ...conflict,
     grade: classifyConflict(conflict),
-  };
-}
-
-function classifyConflict(conflict) {
-  if (
-    conflict.severity === "error" ||
-    conflict.type === "locked_item_violation" ||
-    conflict.type === "overlap_conflict" ||
-    conflict.type === "travel_time_underestimated"
-  ) {
-    return {
-      level: "must-fix",
-      label: "Must fix",
-      rank: 0,
-    };
-  }
-
-  if (
-    conflict.severity === "warning" ||
-    conflict.type === "opening_hours_conflict" ||
-    conflict.type === "meal_window_missing" ||
-    conflict.type === "pace_limit_exceeded" ||
-    conflict.type === "reservation_time_mismatch"
-  ) {
-    return {
-      level: "review",
-      label: "Review",
-      rank: 1,
-    };
-  }
-
-  return {
-    level: "fyi",
-    label: "FYI",
-    rank: 2,
   };
 }
 

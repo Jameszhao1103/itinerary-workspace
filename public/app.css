@@ -2323,6 +2323,26 @@ body {
   font-size: 11px;
 }
 
+.conflict-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 8px;
+  border: 1px solid rgba(211, 200, 183, 0.62);
+  border-radius: 14px;
+  background: rgba(255, 252, 247, 0.58);
+}
+
+.conflict-filter-group,
+.conflict-bulk-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .conflict-entry.active {
   padding: 10px;
   border-radius: 12px;
@@ -2546,6 +2566,11 @@ body {
   .workspace-notice {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .conflict-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .trip-import-itinerary-header,
