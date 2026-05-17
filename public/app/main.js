@@ -1,7 +1,7 @@
 import { requestJson, triggerDownload } from "./api.js";
 import { buildPostImportReviewMessage, renderTripImportReviewChecklist } from "./import-review.js";
 import { createMapController } from "./map.js";
-import { renderPlaceResolutionQueue } from "./place-resolution.js";
+import { collectUnresolvedPlaceItems, renderPlaceResolutionQueue } from "./place-resolution.js";
 import { defaultStartTimeForInsertSession, escapeHtml, eventClass, itemTypeLabel, localTime, minutesRelativeToDay, replaceIsoTime, resolveTripTimeZone, shiftIsoByMinutes } from "./shared.js";
 import { attachTimelineInteractions, buildPlanFlow, buildTimelineHourMarks, buildTimelineLayout, buildTimelineModel, computeTimelineWindow, exactDurationMinutes, flowBlockClass, percentFromTimelineMinute, timelineBlockTitle } from "./timeline.js";
 import { isConflictAccepted, renderTripQualitySummary } from "./trip-quality.js";
@@ -555,6 +555,15 @@ elements.workspaceNotice.addEventListener("click", async (event) => {
   if (actionTarget.dataset.workspaceAction === "redo") {
     await replayHistory("redo");
   }
+});
+
+elements.tripQuality.addEventListener("click", (event) => {
+  const actionTarget = event.target.closest("[data-trip-quality-target]");
+  if (!actionTarget || actionTarget.disabled) {
+    return;
+  }
+
+  drillIntoTripQuality(actionTarget.dataset.tripQualityTarget);
 });
 
 elements.assistantDiff.addEventListener("click", async (event) => {
@@ -2186,6 +2195,95 @@ function focusConflict(conflictId) {
 
   state.scheduleTab = "timeline";
   render();
+}
+
+function drillIntoTripQuality(target) {
+  const activeTrip = getActiveTrip();
+  if (!activeTrip || !target) {
+    return;
+  }
+
+  state.tripBrowserOpen = false;
+  if (target === "unresolved-places") {
+    drillIntoUnresolvedPlace(activeTrip);
+    return;
+  }
+
+  if (target === "must-fix" || target === "review") {
+    const conflict = findQualityConflict(activeTrip, target);
+    if (!conflict) {
+      setPending(false, target === "must-fix" ? "No must-fix issues remain." : "No review items remain.");
+      return;
+    }
+
+    drillIntoConflict(activeTrip, conflict, {
+      showReviewedConflicts: false,
+      message: target === "must-fix" ? "Showing the first must-fix issue." : "Showing the first review item.",
+    });
+    return;
+  }
+
+  if (target === "kept") {
+    const conflict = (activeTrip.conflicts ?? []).find((candidate) => isConflictAccepted(activeTrip, candidate.id));
+    if (!conflict) {
+      setPending(false, "No kept conflicts yet.");
+      return;
+    }
+
+    drillIntoConflict(activeTrip, conflict, {
+      showReviewedConflicts: true,
+      message: "Showing kept conflicts with review history.",
+    });
+  }
+}
+
+function drillIntoUnresolvedPlace(trip) {
+  const unresolved = collectUnresolvedPlaceItems(trip);
+  const first = unresolved[0] ?? null;
+  if (!first) {
+    setPending(false, "No unresolved places remain.");
+    return;
+  }
+
+  state.selectedDay = first.dayDate;
+  state.selectedItemId = first.item.id;
+  state.workspaceTab = "selection";
+  state.scheduleTab = "timeline";
+  clearConflictHighlight();
+  clearPlaceSearchSession();
+  render();
+  setPending(false, `Showing ${first.item.title}. Use Search to resolve its map match.`);
+}
+
+function drillIntoConflict(trip, conflict, options = {}) {
+  state.showReviewedConflicts = Boolean(options.showReviewedConflicts);
+  state.highlightedConflictId = conflict.id;
+  const conflictDay = findConflictDayDate(trip, conflict);
+  if (conflictDay) {
+    state.selectedDay = conflictDay;
+  }
+
+  const focusItemId = conflict.item_ids[0]
+    ?? inferDefaultSelectedItemId(trip, state.selectedDay ?? conflictDay, state.selectedItemId);
+  if (focusItemId) {
+    state.selectedItemId = focusItemId;
+  }
+
+  state.workspaceTab = "assistant";
+  state.scheduleTab = "timeline";
+  clearPlaceSearchSession();
+  render();
+  setPending(false, options.message ?? "Showing quality issue.");
+}
+
+function findQualityConflict(trip, target) {
+  return (trip.conflicts ?? []).find((conflict) => {
+    if (isConflictAccepted(trip, conflict.id)) {
+      return false;
+    }
+
+    return classifyConflict(conflict).level === target;
+  }) ?? null;
 }
 
 function focusPreviewChange(itemId, dayDate) {

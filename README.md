@@ -24,7 +24,7 @@ The goal is simple: let AI help with travel planning without taking control away
 - new-trip intake that turns pasted plans into trip metadata, imported itinerary days/items, and a review checklist
 - imported plans can create full day/item itineraries instead of only an empty trip shell
 - unresolved-place review queue for stops that still need map matches
-- trip quality score summarizing unresolved places, open conflicts, review items, and kept conflicts
+- trip quality score summarizing unresolved places, open conflicts, review items, and kept conflicts, with click-through drill-down into the relevant queue
 - replace and insert places through search + diff previews
 - route and opening-hours validation
 - conflict grading, locate actions, repair previews, and persisted keep-as-is review decisions

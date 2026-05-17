@@ -250,13 +250,30 @@ body {
   flex-wrap: wrap;
 }
 
-.trip-quality-metrics span {
+.trip-quality-metric {
   padding: 3px 7px;
+  border: 0;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.62);
   color: var(--muted);
+  cursor: pointer;
+  font: inherit;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.trip-quality-metric:hover:not(:disabled),
+.trip-quality-metric:focus-visible {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.92);
+  outline: 1px solid rgba(20, 90, 74, 0.22);
+  outline-offset: 2px;
+}
+
+.trip-quality-metric:disabled {
+  cursor: default;
+  opacity: 0.72;
 }
 
 .header-actions {

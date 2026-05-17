@@ -41,6 +41,20 @@ test("trip quality score treats accepted conflicts as reviewed history", () => {
   assert.match(renderTripQualitySummary(trip), /1 kept conflict/);
 });
 
+test("trip quality score renders drill-down targets for active metrics", () => {
+  const trip = tripFixture({
+    conflicts: [
+      conflict({ id: "overlap_1", type: "overlap_conflict", severity: "error" }),
+    ],
+  });
+
+  const html = renderTripQualitySummary(trip);
+  assert.match(html, /data-trip-quality-target="unresolved-places"/);
+  assert.match(html, /data-trip-quality-target="must-fix"/);
+  assert.match(html, /data-trip-quality-target="review"[\s\S]*disabled/);
+  assert.match(html, /data-trip-quality-target="kept"[\s\S]*disabled/);
+});
+
 function tripFixture(overrides = {}) {
   return {
     days: [

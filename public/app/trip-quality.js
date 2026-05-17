@@ -62,10 +62,10 @@ export function renderTripQualitySummary(trip) {
       <div class="trip-quality-copy">
         <strong>${escapeHtml(quality.primaryIssue)}</strong>
         <div class="trip-quality-metrics">
-          <span>${escapeHtml(formatCount(quality.unresolvedPlaceCount, "unresolved place"))}</span>
-          <span>${escapeHtml(formatCount(quality.mustFixCount, "must-fix issue"))}</span>
-          <span>${escapeHtml(formatCount(quality.reviewCount, "review item"))}</span>
-          <span>${escapeHtml(formatCount(quality.acceptedConflictCount, "kept conflict"))}</span>
+          ${renderMetric(quality.unresolvedPlaceCount, "unresolved place", "unresolved-places")}
+          ${renderMetric(quality.mustFixCount, "must-fix issue", "must-fix")}
+          ${renderMetric(quality.reviewCount, "review item", "review")}
+          ${renderMetric(quality.acceptedConflictCount, "kept conflict", "kept")}
         </div>
       </div>
     </section>
@@ -128,6 +128,20 @@ function primaryIssue(metrics) {
 
 function formatCount(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function renderMetric(count, singular, target) {
+  const label = formatCount(count, singular);
+  return `
+    <button
+      type="button"
+      class="trip-quality-metric"
+      data-trip-quality-target="${escapeHtml(target)}"
+      aria-label="${escapeHtml(`Show ${label}`)}"
+      ${count > 0 ? "" : "disabled"}>
+      ${escapeHtml(label)}
+    </button>
+  `;
 }
 
 function clampScore(value) {
