@@ -80,6 +80,8 @@ export async function handleAppRequest(runtime, request) {
           maps: {
             browser_api_key: runtime.mapsBrowserApiKey ?? null,
             browser_api_key_present: Boolean(runtime.mapsBrowserApiKey),
+            browser_map_id: runtime.mapsBrowserMapId ?? null,
+            browser_map_id_present: Boolean(runtime.mapsBrowserMapId),
           },
           exports: {
             calendar_ics_url: `/api/trips/${trip.trip_id}/export/ics`,
@@ -240,6 +242,7 @@ export async function handleAppRequest(runtime, request) {
         assistant_provider: runtime.assistantProvider ?? "rules",
         sample_trip_id: runtime.sampleTripId,
         maps_browser_key_present: Boolean(runtime.mapsBrowserApiKey),
+        maps_browser_map_id_present: Boolean(runtime.mapsBrowserMapId),
       },
       meta: {
         request_id: randomUUID(),

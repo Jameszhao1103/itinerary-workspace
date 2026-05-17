@@ -165,11 +165,14 @@ Key environment variables:
 ```bash
 GOOGLE_MAPS_API_KEY=your_server_key
 GOOGLE_MAPS_BROWSER_API_KEY=your_browser_key
+GOOGLE_MAPS_BROWSER_MAP_ID=your_browser_map_id
 PLANNER_PROVIDER=google
 OPENAI_API_KEY=your_openai_key
 OPENAI_MODEL=gpt-4.1-mini
 PLANNER_COMMAND_TRANSLATOR=openai
 ```
+
+`GOOGLE_MAPS_BROWSER_MAP_ID` enables the Maps JavaScript vector map and `AdvancedMarkerElement`. If omitted, the local prototype falls back to Google's `DEMO_MAP_ID`; use your own map ID for production.
 
 Additional storage, logging, and cache settings are documented in [.env.example](./.env.example).
 

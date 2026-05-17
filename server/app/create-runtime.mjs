@@ -26,6 +26,7 @@ import {
   resolveCommandPlannerMode,
   resolveDebugRoutesEnabled,
   resolveMapsBrowserApiKey,
+  resolveMapsBrowserMapId,
   resolveObservabilityConfig,
   resolveOpenAiConfig,
   resolveStorageDirectory,
@@ -38,6 +39,7 @@ export async function createRuntime() {
   const env = resolveRuntimeEnv();
   const provider = resolveRuntimeMode(env);
   const mapsBrowserApiKey = resolveMapsBrowserApiKey(env);
+  const mapsBrowserMapId = resolveMapsBrowserMapId(env);
   const commandPlannerMode = resolveCommandPlannerMode(env);
   const openAiConfig = resolveOpenAiConfig(env);
   const storageMode = resolveStorageMode(env);
@@ -140,6 +142,7 @@ export async function createRuntime() {
     logger,
     metrics,
     mapsBrowserApiKey,
+    mapsBrowserMapId,
     sampleTripId: SAMPLE_TRIP_ID,
     catalog,
     placesAdapter,
@@ -160,6 +163,7 @@ export async function createRuntime() {
         storage_directory: storageDirectory,
         debug_routes_enabled: debugRoutesEnabled,
         maps_browser_key_present: Boolean(mapsBrowserApiKey),
+        maps_browser_map_id_present: Boolean(mapsBrowserMapId),
         metrics: metrics.snapshot(),
         cache: {
           places: placesAdapter.snapshot(),

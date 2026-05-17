@@ -29,6 +29,7 @@ const state = {
   assistantProvider: "rules",
   storageMode: "memory",
   mapsBrowserApiKey: null,
+  mapsBrowserMapId: null,
   debugEnabled: false,
   placeSearchSession: null,
   undoStack: [],
@@ -1304,6 +1305,7 @@ async function loadTrip(nextTripId = state.tripId) {
   state.assistantProvider = payload.workspace.assistant?.provider ?? "rules";
   state.storageMode = payload.workspace.storage?.mode ?? "memory";
   state.mapsBrowserApiKey = payload.workspace.maps?.browser_api_key ?? null;
+  state.mapsBrowserMapId = payload.workspace.maps?.browser_map_id ?? null;
   state.debugEnabled = payload.workspace.debug?.enabled ?? false;
   state.selectedDay = isSameTrip
     ? (state.selectedDay ?? payload.workspace.selected_day ?? payload.trip.days[0]?.date ?? null)
@@ -1611,6 +1613,7 @@ function renderMap(trip, day, selectedItem, highlightedConflictItemIds) {
   mapController.renderMap({
     provider: state.provider,
     mapsBrowserApiKey: state.mapsBrowserApiKey,
+    mapsBrowserMapId: state.mapsBrowserMapId,
     trip,
     day,
     selectedItem,

@@ -1,6 +1,22 @@
 import { escapeHtml, routeTouchesSelected, shortLabel } from "./shared.js";
 import { makeItemFlowBlock, timelineBlockTitle } from "./timeline.js";
 
+export const DEFAULT_GOOGLE_MAP_ID = "DEMO_MAP_ID";
+
+export function resolveGoogleMapsMapId(mapId) {
+  return mapId || DEFAULT_GOOGLE_MAP_ID;
+}
+
+export function buildGoogleMapsScriptUrl(apiKey) {
+  const params = new URLSearchParams({
+    key: apiKey,
+    v: "weekly",
+    libraries: "geometry,marker",
+    loading: "async",
+  });
+  return `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
+}
+
 export function createMapController({ mapCanvas, mapStatus, selectItem }) {
   const mapRuntime = {
     promise: null,
@@ -29,10 +45,21 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
   }
 
   function clearGoogleMapOverlays() {
-    mapRuntime.markers.forEach((marker) => marker.setMap(null));
+    mapRuntime.markers.forEach(clearMapOverlay);
     mapRuntime.polylines.forEach((polyline) => polyline.setMap(null));
     mapRuntime.markers = [];
     mapRuntime.polylines = [];
+  }
+
+  function clearMapOverlay(overlay) {
+    if (typeof overlay?.setMap === "function") {
+      overlay.setMap(null);
+      return;
+    }
+
+    if (overlay && "map" in overlay) {
+      overlay.map = null;
+    }
   }
 
   function destroyGoogleMap() {
@@ -178,18 +205,19 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
     setMapStatus(message, isError);
   }
 
-  async function renderGoogleMap(trip, items, mapPoints, selectedItem, highlightedConflictItemIds, apiKey) {
+  async function renderGoogleMap(trip, items, mapPoints, selectedItem, highlightedConflictItemIds, apiKey, mapId) {
     const renderToken = ++mapRuntime.renderToken;
     setMapStatus("Loading Google Map…");
 
     try {
       const maps = await loadGoogleMapsApi(apiKey);
+      const markerLibrary = await loadGoogleMarkerLibrary(maps).catch(() => null);
       if (renderToken !== mapRuntime.renderToken) {
         return;
       }
 
-      ensureGoogleMap(maps);
-      drawGoogleMap(trip, items, mapPoints, selectedItem, highlightedConflictItemIds, maps);
+      ensureGoogleMap(maps, mapId);
+      drawGoogleMap(trip, items, mapPoints, selectedItem, highlightedConflictItemIds, maps, markerLibrary);
       clearMapStatus();
     } catch (error) {
       if (renderToken !== mapRuntime.renderToken) {
@@ -208,7 +236,7 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
     }
   }
 
-  function ensureGoogleMap(maps) {
+  function ensureGoogleMap(maps, mapId) {
     if (mapRuntime.map) {
       return;
     }
@@ -217,6 +245,7 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
     mapRuntime.map = new maps.Map(mapCanvas, {
       center: { lat: 35.5951, lng: -82.5515 },
       zoom: 12,
+      mapId: resolveGoogleMapsMapId(mapId),
       mapTypeControl: false,
       streetViewControl: false,
       fullscreenControl: false,
@@ -226,7 +255,7 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
     mapRuntime.infoWindow = new maps.InfoWindow();
   }
 
-  function drawGoogleMap(trip, items, mapPoints, selectedItem, highlightedConflictItemIds, maps) {
+  function drawGoogleMap(trip, items, mapPoints, selectedItem, highlightedConflictItemIds, maps, markerLibrary) {
     clearGoogleMapOverlays();
 
     const itemIds = new Set(items.map((item) => item.id));
@@ -238,27 +267,7 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
 
     mapPoints.forEach((point) => {
       markerBounds.extend({ lat: point.lat, lng: point.lng });
-      const marker = new maps.Marker({
-        map: mapRuntime.map,
-        position: { lat: point.lat, lng: point.lng },
-        title: point.item.title,
-        label: {
-          text: point.label,
-          color: point.item.id === selectedItem?.id ? "#145a4a" : "#ffffff",
-          fontWeight: "700",
-        },
-        icon: {
-          path: maps.SymbolPath.CIRCLE,
-          scale: point.item.id === selectedItem?.id ? 13 : 11,
-          fillColor: markerColor(point.place.category),
-          fillOpacity: 1,
-          strokeColor: point.item.id === selectedItem?.id
-            ? "#145a4a"
-            : (highlightedConflictItemIds?.has(point.item.id) ? "#d28325" : "#ffffff"),
-          strokeWeight: point.item.id === selectedItem?.id ? 3 : (highlightedConflictItemIds?.has(point.item.id) ? 3 : 2),
-        },
-        zIndex: point.item.id === selectedItem?.id ? 9 : (highlightedConflictItemIds?.has(point.item.id) ? 7 : 4),
-      });
+      const marker = makePlaceMarker(maps, markerLibrary, point, selectedItem, highlightedConflictItemIds);
 
       marker.addListener("click", () => {
         selectItem(point.item.id);
@@ -291,7 +300,7 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
       });
 
       mapRuntime.polylines.push(polyline);
-      const labelMarker = makeRouteLabelMarker(maps, route, path, isSelected, isConflict);
+      const labelMarker = makeRouteLabelMarker(maps, markerLibrary, route, path, isSelected, isConflict);
       if (labelMarker) {
         mapRuntime.markers.push(labelMarker);
       }
@@ -342,12 +351,65 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
     ];
   }
 
-  function makeRouteLabelMarker(maps, route, path, isSelected, isConflict) {
+  function makePlaceMarker(maps, markerLibrary, point, selectedItem, highlightedConflictItemIds) {
+    const selected = point.item.id === selectedItem?.id;
+    const conflict = highlightedConflictItemIds?.has(point.item.id);
+    const position = { lat: point.lat, lng: point.lng };
+    if (markerLibrary?.AdvancedMarkerElement) {
+      return new markerLibrary.AdvancedMarkerElement({
+        map: mapRuntime.map,
+        position,
+        title: point.item.title,
+        content: makePlaceMarkerContent(point, selected, conflict),
+        zIndex: selected ? 9 : (conflict ? 7 : 4),
+      });
+    }
+
+    return new maps.Marker({
+      map: mapRuntime.map,
+      position,
+      title: point.item.title,
+      label: {
+        text: point.label,
+        color: selected ? "#145a4a" : "#ffffff",
+        fontWeight: "700",
+      },
+      icon: {
+        path: maps.SymbolPath.CIRCLE,
+        scale: selected ? 13 : 11,
+        fillColor: markerColor(point.place.category),
+        fillOpacity: 1,
+        strokeColor: selected ? "#145a4a" : (conflict ? "#d28325" : "#ffffff"),
+        strokeWeight: selected ? 3 : (conflict ? 3 : 2),
+      },
+      zIndex: selected ? 9 : (conflict ? 7 : 4),
+    });
+  }
+
+  function makePlaceMarkerContent(point, selected, conflict) {
+    const marker = document.createElement("button");
+    marker.type = "button";
+    marker.className = `map-advanced-marker ${markerClass(point.place.category)}${selected ? " selected" : ""}${conflict ? " conflict" : ""}`;
+    marker.textContent = point.label;
+    marker.setAttribute("aria-label", point.item.title);
+    return marker;
+  }
+
+  function makeRouteLabelMarker(maps, markerLibrary, route, path, isSelected, isConflict) {
     if (!path.length || !route.duration_minutes) {
       return null;
     }
 
     const midpoint = path[Math.floor(path.length / 2)];
+    if (markerLibrary?.AdvancedMarkerElement) {
+      return new markerLibrary.AdvancedMarkerElement({
+        map: mapRuntime.map,
+        position: midpoint,
+        content: makeRouteLabelContent(route, isSelected, isConflict),
+        zIndex: isSelected ? 6 : 5,
+      });
+    }
+
     return new maps.Marker({
       map: mapRuntime.map,
       position: midpoint,
@@ -368,6 +430,13 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
       },
       zIndex: isSelected ? 6 : 5,
     });
+  }
+
+  function makeRouteLabelContent(route, isSelected, isConflict) {
+    const label = document.createElement("div");
+    label.className = `map-advanced-route-label${isSelected ? " selected" : ""}${isConflict ? " conflict" : ""}`;
+    label.textContent = `${route.duration_minutes}m`;
+    return label;
   }
 
   function decodeRouteStepPath(maps, steps = []) {
@@ -613,7 +682,7 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
       script.async = true;
       script.defer = true;
       script.dataset.googleMapsLoader = "true";
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly&libraries=geometry`;
+      script.src = buildGoogleMapsScriptUrl(apiKey);
       script.addEventListener(
         "load",
         () => {
@@ -645,7 +714,7 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
   }
 
   return {
-    renderMap({ provider, mapsBrowserApiKey, trip, day, selectedItem, highlightedConflictItemIds }) {
+    renderMap({ provider, mapsBrowserApiKey, mapsBrowserMapId, trip, day, selectedItem, highlightedConflictItemIds }) {
       const items = day?.items ?? [];
       const mapPoints = buildMapPoints(trip, items);
       if (!day || mapPoints.length === 0) {
@@ -680,9 +749,17 @@ export function createMapController({ mapCanvas, mapStatus, selectItem }) {
         return;
       }
 
-      void renderGoogleMap(trip, items, mapPoints, selectedItem, highlightedConflictItemIds, mapsBrowserApiKey);
+      void renderGoogleMap(trip, items, mapPoints, selectedItem, highlightedConflictItemIds, mapsBrowserApiKey, mapsBrowserMapId);
     },
   };
+}
+
+async function loadGoogleMarkerLibrary(maps) {
+  if (maps.importLibrary) {
+    return maps.importLibrary("marker");
+  }
+
+  return maps.marker ?? null;
 }
 
 function routeTouchesHighlightedConflict(route, highlightedConflictItemIds) {

@@ -22,6 +22,15 @@ export function resolveMapsBrowserApiKey(env = resolveRuntimeEnv()) {
   );
 }
 
+export function resolveMapsBrowserMapId(env = resolveRuntimeEnv()) {
+  return (
+    env.GOOGLE_MAPS_BROWSER_MAP_ID ??
+    env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID ??
+    env.GOOGLE_MAPS_MAP_ID ??
+    "DEMO_MAP_ID"
+  );
+}
+
 export function resolveStorageMode(env = resolveRuntimeEnv()) {
   const mode = env.PLANNER_STORAGE_MODE ?? "file";
   return mode === "memory" ? "memory" : "file";
