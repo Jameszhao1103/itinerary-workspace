@@ -2,6 +2,7 @@ import { requestJson, triggerDownload } from "./api.js";
 import { buildPostImportReviewMessage, renderTripImportReviewChecklist } from "./import-review.js";
 import { createMapController } from "./map.js";
 import { collectUnresolvedPlaceItems, renderPlaceResolutionQueue } from "./place-resolution.js";
+import { renderReviewHistory } from "./review-history.js";
 import { defaultStartTimeForInsertSession, escapeHtml, eventClass, itemTypeLabel, localTime, minutesRelativeToDay, replaceIsoTime, resolveTripTimeZone, shiftIsoByMinutes } from "./shared.js";
 import { attachTimelineInteractions, buildPlanFlow, buildTimelineHourMarks, buildTimelineLayout, buildTimelineModel, computeTimelineWindow, exactDurationMinutes, flowBlockClass, percentFromTimelineMinute, timelineBlockTitle } from "./timeline.js";
 import { isConflictAccepted, renderTripQualitySummary } from "./trip-quality.js";
@@ -573,6 +574,16 @@ elements.assistantDiff.addEventListener("click", async (event) => {
       previewFocusTarget.dataset.previewFocusItemId ?? null,
       previewFocusTarget.dataset.previewFocusDayDate ?? null
     );
+    return;
+  }
+
+  const reviewLocateTarget = event.target.closest("[data-review-action='locate']");
+  if (reviewLocateTarget) {
+    focusReviewHistoryEntry({
+      conflictId: reviewLocateTarget.dataset.conflictId ?? null,
+      dayDate: reviewLocateTarget.dataset.dayDate ?? null,
+      itemId: reviewLocateTarget.dataset.itemId ?? null,
+    });
     return;
   }
 
@@ -1791,6 +1802,7 @@ function renderAssistant(trip, day, selectedItem, highlightedConflict) {
         highlightedConflictId: highlightedConflict?.id ?? null,
         title: "Current conflicts",
       })}
+      ${renderReviewHistory(trip)}
     `;
     elements.applyButton.classList.add("hidden");
     elements.rejectButton.classList.add("hidden");
@@ -2195,6 +2207,38 @@ function focusConflict(conflictId) {
 
   state.scheduleTab = "timeline";
   render();
+}
+
+function focusReviewHistoryEntry({ conflictId, dayDate, itemId }) {
+  const activeTrip = getActiveTrip();
+  if (!activeTrip) {
+    return;
+  }
+
+  const conflict = activeTrip.conflicts.find((candidate) => candidate.id === conflictId) ?? null;
+  if (conflict) {
+    drillIntoConflict(activeTrip, conflict, {
+      showReviewedConflicts: true,
+      message: "Showing kept conflict from review history.",
+    });
+    return;
+  }
+
+  if (dayDate) {
+    state.selectedDay = dayDate;
+  }
+
+  if (itemId) {
+    state.selectedItemId = itemId;
+  }
+
+  state.workspaceTab = "selection";
+  state.scheduleTab = "timeline";
+  state.showReviewedConflicts = true;
+  clearConflictHighlight();
+  clearPlaceSearchSession();
+  render();
+  setPending(false, "Showing stop from review history.");
 }
 
 function drillIntoTripQuality(target) {

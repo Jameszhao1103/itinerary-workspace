@@ -27,7 +27,7 @@ The goal is simple: let AI help with travel planning without taking control away
 - trip quality score summarizing unresolved places, open conflicts, review items, and kept conflicts, with click-through drill-down into the relevant queue
 - replace and insert places through search + diff previews
 - route and opening-hours validation
-- conflict grading, locate actions, repair previews, and persisted keep-as-is review decisions
+- conflict grading, locate actions, repair previews, persisted keep-as-is review decisions, and review-history audit trail
 - conflict repair previews for overlap, travel-time, meal-gap, and pacing issues
 - multi-step undo / redo for direct edits
 - `.ics` calendar export and print-friendly HTML export
@@ -251,7 +251,7 @@ Known gaps:
 - no auth or multi-user model yet
 - file-backed persistence instead of a production database
 - heuristic planner behavior instead of a full optimization solver
-- keep-as-is decisions now persist, but there is not yet a full review-history browser or audit trail UI
+- review history is visible for kept conflicts, but there is not yet filtering, export, or multi-user attribution beyond the stored actor
 - provider usage still needs stronger cost controls and observability
 - UI is functional and richer than the first MVP, but still not production-polished
 

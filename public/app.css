@@ -2377,6 +2377,93 @@ body {
   color: var(--muted);
 }
 
+.review-history {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(211, 200, 183, 0.62);
+}
+
+.review-history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.review-history-header p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.review-history-header span {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(20, 90, 74, 0.1);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.review-history-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid rgba(211, 200, 183, 0.62);
+  border-radius: 12px;
+  background: rgba(255, 252, 247, 0.58);
+}
+
+.review-history-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.review-history-title {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.review-history-title strong {
+  overflow-wrap: anywhere;
+}
+
+.review-history-copy small,
+.review-history-copy p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.review-history-copy p {
+  margin: 0;
+}
+
+.review-history-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .conflict-ignored-note {
   display: inline-flex;
   align-items: center;
@@ -2467,8 +2554,18 @@ body {
   .trip-import-item-meta-row,
   .place-resolution-header,
   .place-resolution-item,
+  .review-history-header,
+  .review-history-item,
   .conflict-row {
     flex-direction: column;
+  }
+
+  .review-history-item {
+    grid-template-columns: 1fr;
+  }
+
+  .review-history-actions {
+    justify-content: flex-start;
   }
 
   .schedule-conflict-list li {
